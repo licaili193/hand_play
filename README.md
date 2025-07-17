@@ -14,6 +14,8 @@ This repository contains a simple demonstration of generating hand pose frames f
    python demo/midi_to_frames.py example.mid --out output_frames
    ```
 
-Images for each frame will be saved in the specified output directory. Each image shows an approximate location of the left (blue) and right (red) hands over time.
+Images for each frame will be saved in the specified output directory. When GPU
+rendering is available the hands are rendered using the MANO model. Otherwise a
+simple skeleton is drawn for each hand so the finger structure is still visible.
 
 This is a minimal example that uses a small portion of the PianoMotion10M codebase. It does not require the full dataset or pretrained models.

@@ -4,6 +4,41 @@ import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 
+# Simple hand template used for fallback 2D skeleton rendering when the
+# full 3D renderer is unavailable. Coordinates roughly describe an open
+# hand in the x-y plane.
+HAND_POINTS = np.array([
+    [0.0, 0.0, 0.0],      # 0 wrist
+    [0.05, -0.05, 0.0],   # 1 thumb base
+    [0.10, -0.10, 0.0],   # 2
+    [0.15, -0.15, 0.0],   # 3
+    [0.20, -0.20, 0.0],   # 4 thumb tip
+    [0.05, 0.00, 0.0],    # 5 index base
+    [0.10, 0.15, 0.0],    # 6
+    [0.15, 0.30, 0.0],    # 7
+    [0.20, 0.45, 0.0],    # 8 index tip
+    [0.00, 0.05, 0.0],    # 9 middle base
+    [0.00, 0.20, 0.0],    #10
+    [0.00, 0.35, 0.0],    #11
+    [0.00, 0.50, 0.0],    #12 middle tip
+    [-0.05, 0.00, 0.0],   #13 ring base
+    [-0.10, 0.15, 0.0],   #14
+    [-0.15, 0.30, 0.0],   #15
+    [-0.20, 0.45, 0.0],   #16 ring tip
+    [-0.10, -0.05, 0.0],  #17 little base
+    [-0.15, 0.05, 0.0],   #18
+    [-0.20, 0.15, 0.0],   #19
+    [-0.25, 0.25, 0.0],   #20 little tip
+])
+
+HAND_BONES = [
+    (0, 1), (1, 2), (2, 3), (3, 4),       # thumb
+    (0, 5), (5, 6), (6, 7), (7, 8),       # index
+    (0, 9), (9,10), (10,11), (11,12),     # middle
+    (0,13), (13,14), (14,15), (15,16),    # ring
+    (0,17), (17,18), (18,19), (19,20),    # little
+]
+
 try:
     from PianoMotion10M.datasets import utils as pm_utils
 except ImportError:  # Library not installed, clone on demand
@@ -91,11 +126,26 @@ def midi_to_frames(midi_path, output_dir, fps=30):
             poses_right[i, 0] = rx
             poses_right[i, 2] = -1.0
         else:
-            fig, ax = plt.subplots(figsize=(4, 2))
-            ax.scatter([lx, rx], [0, 0], c=['blue', 'red'])
+            fig, ax = plt.subplots(figsize=(4, 4))
             ax.set_xlim(-1.1, 1.1)
-            ax.set_ylim(-0.1, 0.1)
+            ax.set_ylim(-0.6, 0.8)
             ax.axis('off')
+
+            def draw_hand(points, color):
+                for a, b in HAND_BONES:
+                    ax.plot([points[a,0], points[b,0]],
+                            [points[a,1], points[b,1]],
+                            color=color, linewidth=2)
+
+            right_hand = HAND_POINTS.copy()
+            right_hand[:,0] += rx
+            draw_hand(right_hand, 'red')
+
+            left_hand = HAND_POINTS.copy()
+            left_hand[:,0] = -left_hand[:,0]  # mirror
+            left_hand[:,0] += lx
+            draw_hand(left_hand, 'blue')
+
             fig.savefig(os.path.join(output_dir, f"frame_{i:04d}.png"))
             plt.close(fig)
 
