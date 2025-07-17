@@ -1,62 +1,58 @@
 import argparse
 import os
-import shutil
+import json
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Simple hand template used for fallback 2D skeleton rendering when the
-# full 3D renderer is unavailable. Coordinates roughly describe an open
-# hand in the x-y plane.
-HAND_POINTS = np.array([
-    [0.0, 0.0, 0.0],      # 0 wrist
-    [0.05, -0.05, 0.0],   # 1 thumb base
-    [0.10, -0.10, 0.0],   # 2
-    [0.15, -0.15, 0.0],   # 3
-    [0.20, -0.20, 0.0],   # 4 thumb tip
-    [0.05, 0.00, 0.0],    # 5 index base
-    [0.10, 0.15, 0.0],    # 6
-    [0.15, 0.30, 0.0],    # 7
-    [0.20, 0.45, 0.0],    # 8 index tip
-    [0.00, 0.05, 0.0],    # 9 middle base
-    [0.00, 0.20, 0.0],    #10
-    [0.00, 0.35, 0.0],    #11
-    [0.00, 0.50, 0.0],    #12 middle tip
-    [-0.05, 0.00, 0.0],   #13 ring base
-    [-0.10, 0.15, 0.0],   #14
-    [-0.15, 0.30, 0.0],   #15
-    [-0.20, 0.45, 0.0],   #16 ring tip
-    [-0.10, -0.05, 0.0],  #17 little base
-    [-0.15, 0.05, 0.0],   #18
-    [-0.20, 0.15, 0.0],   #19
-    [-0.25, 0.25, 0.0],   #20 little tip
-])
+def load_hand_model():
+    """Load hand model from JSON file. Program fails if not found."""
+    try:
+        with open("hand_model.json", "r") as f:
+            model_data = json.load(f)
+        hand_points = np.array(model_data["hand_points"])
+        hand_bones = model_data["hand_bones"]
+        print("✓ Loaded hand model from hand_model.json")
+        return hand_points, hand_bones
+    except FileNotFoundError:
+        print("❌ Error: hand_model.json not found!")
+        print("Please run the setup script to download the hand model:")
+        print("  python setup_pianomotion.ps1")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"❌ Error: Invalid JSON in hand_model.json: {e}")
+        sys.exit(1)
+    except KeyError as e:
+        print(f"❌ Error: Missing required key in hand_model.json: {e}")
+        sys.exit(1)
 
-HAND_BONES = [
-    (0, 1), (1, 2), (2, 3), (3, 4),       # thumb
-    (0, 5), (5, 6), (6, 7), (7, 8),       # index
-    (0, 9), (9,10), (10,11), (11,12),     # middle
-    (0,13), (13,14), (14,15), (15,16),    # ring
-    (0,17), (17,18), (18,19), (19,20),    # little
-]
+# Load hand model
+HAND_POINTS, HAND_BONES = load_hand_model()
 
 try:
     from PianoMotion10M.datasets import utils as pm_utils
-except ImportError:  # Library not installed, clone on demand
-    import subprocess, sys, tempfile
-    repo_url = "https://github.com/agnJason/PianoMotion10M.git"
-    tmpdir = tempfile.mkdtemp()
-    subprocess.check_call(["git", "clone", "--depth", "1", repo_url, tmpdir])
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "librosa", "soundfile", "tqdm"], stdout=subprocess.DEVNULL)
-    sys.path.append(tmpdir)
-    from datasets import utils as pm_utils
+    print("✓ Using installed PianoMotion10M package")
+except ImportError:  # Library not installed, try local clone
+    import sys
+    import os
+    
+    # Check if we have a local clone
+    local_repo = "PianoMotion10M"
+    if os.path.exists(local_repo):
+        sys.path.append(local_repo)
+        try:
+            from datasets import utils as pm_utils
+            print(f"✓ Using local PianoMotion10M repository at '{local_repo}'")
+        except ImportError:
+            print(f"Error: PianoMotion10M repository found at '{local_repo}' but import failed.")
+            print("Please run the setup script: .\\setup_pianomotion.ps1")
+            sys.exit(1)
+    else:
+        print("Error: PianoMotion10M repository not found.")
+        print("Please run the setup script: .\\setup_pianomotion.ps1")
+        sys.exit(1)
 
-try:
-    # Rendering utilities (requires GPU and nvdiffrast)
-    from PianoMotion10M.datasets.show import render_result_frame
-    import torch
-    HAS_RENDER = torch.cuda.is_available()
-except Exception as e:  # pragma: no cover - optional dependency
-    HAS_RENDER = False
+print("✓ Using 2D skeleton rendering")
 
 from mido import MidiFile
 
@@ -102,17 +98,19 @@ def note_to_x(note_index):
     return -1.0 + 2.0 * (note_index / 87.0)
 
 def midi_to_frames(midi_path, output_dir, fps=30):
+    print(f"Processing MIDI file: {midi_path}")
     events, times = read_midi_general(midi_path)
     duration = times[-1] if len(times) > 0 else 0
+    print(f"MIDI duration: {duration:.2f} seconds")
+    
+    print("Computing frame roll...")
     frame_roll = read_frame_roll(times, events, duration, fps)
+    print(f"Generated {len(frame_roll)} frames at {fps} FPS")
 
     os.makedirs(output_dir, exist_ok=True)
+    print(f"Output directory: {output_dir}")
 
-    # Prepare poses for optional advanced rendering
-    if HAS_RENDER:
-        poses_left = np.zeros((len(frame_roll), 51), dtype=np.float32)
-        poses_right = np.zeros_like(poses_left)
-
+    print("Generating 2D skeleton frames...")
     for i, frame in enumerate(frame_roll):
         notes = np.where(frame > 0)[0]
         left = [n for n in notes if n < 44]
@@ -120,41 +118,30 @@ def midi_to_frames(midi_path, output_dir, fps=30):
         lx = np.mean([note_to_x(n) for n in left]) if left else -0.5
         rx = np.mean([note_to_x(n) for n in right]) if right else 0.5
 
-        if HAS_RENDER:
-            poses_left[i, 0] = lx
-            poses_left[i, 2] = -1.0
-            poses_right[i, 0] = rx
-            poses_right[i, 2] = -1.0
-        else:
-            fig, ax = plt.subplots(figsize=(4, 4))
-            ax.set_xlim(-1.1, 1.1)
-            ax.set_ylim(-0.6, 0.8)
-            ax.axis('off')
+        fig, ax = plt.subplots(figsize=(4, 4))
+        ax.set_xlim(-1.1, 1.1)
+        ax.set_ylim(-0.6, 0.8)
+        ax.axis('off')
 
-            def draw_hand(points, color):
-                for a, b in HAND_BONES:
-                    ax.plot([points[a,0], points[b,0]],
-                            [points[a,1], points[b,1]],
-                            color=color, linewidth=2)
+        def draw_hand(points, color):
+            for a, b in HAND_BONES:
+                ax.plot([points[a,0], points[b,0]],
+                        [points[a,1], points[b,1]],
+                        color=color, linewidth=2)
 
-            right_hand = HAND_POINTS.copy()
-            right_hand[:,0] += rx
-            draw_hand(right_hand, 'red')
+        right_hand = HAND_POINTS.copy()
+        right_hand[:,0] += rx
+        draw_hand(right_hand, 'red')
 
-            left_hand = HAND_POINTS.copy()
-            left_hand[:,0] = -left_hand[:,0]  # mirror
-            left_hand[:,0] += lx
-            draw_hand(left_hand, 'blue')
+        left_hand = HAND_POINTS.copy()
+        left_hand[:,0] = -left_hand[:,0]  # mirror
+        left_hand[:,0] += lx
+        draw_hand(left_hand, 'blue')
 
-            fig.savefig(os.path.join(output_dir, f"frame_{i:04d}.png"))
-            plt.close(fig)
-
-    if HAS_RENDER:
-        for idx in range(len(frame_roll)):
-            render_result_frame(poses_right, poses_left, frame_id=idx, idx_id="frame")
-        # move produced images generated in `figs/` to output directory
-        for f in os.listdir("figs"):
-            shutil.move(os.path.join("figs", f), os.path.join(output_dir, f))
+        fig.savefig(os.path.join(output_dir, f"frame_{i:04d}.png"))
+        plt.close(fig)
+    
+    print(f"✓ Successfully generated {len(frame_roll)} frames!")
 
 def main():
     parser = argparse.ArgumentParser(description="Generate simple hand position frames from MIDI")

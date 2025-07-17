@@ -1,4 +1,5 @@
 output_frames/
 figs/
 __pycache__/
-
+PianoMotion10M/
+*.png
