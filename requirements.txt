@@ -1,0 +1,12 @@
+# Core dependencies
+mido
+matplotlib
+numpy
+
+# Video generation dependencies
+imageio
+moviepy
+soundfile
+
+# Optional: for better video compression
+imageio-ffmpeg 
