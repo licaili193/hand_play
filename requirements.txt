@@ -8,5 +8,8 @@ imageio
 moviepy
 soundfile
 
+# Audio processing dependencies
+librosa
+
 # Optional: for better video compression
 imageio-ffmpeg 

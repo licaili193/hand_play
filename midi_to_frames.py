@@ -11,12 +11,16 @@ try:
     import imageio.v2 as imageio  # Use v2 to avoid deprecation warning
     from moviepy import VideoFileClip, AudioFileClip
     import soundfile as sf
+    import librosa
+    import librosa.display
+    AUDIO_AVAILABLE = True
     VIDEO_AVAILABLE = True
-    print("✓ Video generation libraries available")
+    print("✓ Video and audio generation libraries available")
 except ImportError as e:
     VIDEO_AVAILABLE = False
-    print(f"⚠️  Video generation libraries not available: {e}")
-    print("Install with: pip install imageio moviepy soundfile")
+    AUDIO_AVAILABLE = False
+    print(f"⚠️  Video/audio generation libraries not available: {e}")
+    print("Install with: pip install imageio moviepy soundfile librosa")
 
 def load_hand_model():
     """Load hand model from JSON file."""
@@ -345,17 +349,114 @@ def generate_finger_angles(notes, frame_idx, fps, hand_side):
     
     return angles
 
-def create_video_from_frames(output_dir, fps=30, video_name="hand_animation.mp4"):
-    """Create a video from the generated frame images."""
+def midi_to_audio(midi_path, output_path, sr=22050):
+    """Convert MIDI file to audio using mido and numpy."""
+    if not AUDIO_AVAILABLE:
+        print("❌ Audio generation libraries not available. Skipping audio creation.")
+        return False
+    
+    try:
+        print(f"Converting MIDI to audio: {midi_path}")
+        
+        # Load MIDI file
+        midi_file = MidiFile(midi_path)
+        
+        # Get tempo (default to 120 BPM if not found)
+        tempo = 500000  # microseconds per beat (120 BPM)
+        for msg in midi_file.tracks[0]:
+            if msg.type == 'set_tempo':
+                tempo = msg.tempo
+                break
+        
+        # Calculate timing
+        ticks_per_beat = midi_file.ticks_per_beat
+        beats_per_second = 1e6 / tempo
+        ticks_per_second = ticks_per_beat * beats_per_second
+        
+        # Initialize audio array
+        duration_seconds = 0
+        for track in midi_file.tracks:
+            track_time = 0
+            for msg in track:
+                track_time += msg.time
+            duration_seconds = max(duration_seconds, track_time / ticks_per_second)
+        
+        # Create audio array
+        audio_length = int(duration_seconds * sr)
+        audio = np.zeros(audio_length)
+        
+        # Process MIDI events to generate audio
+        current_time = 0
+        active_notes = {}  # {note: (start_time, velocity)}
+        
+        for track in midi_file.tracks:
+            track_time = 0
+            for msg in track:
+                track_time += msg.time
+                current_time = track_time / ticks_per_second
+                
+                if msg.type == 'note_on' and msg.velocity > 0:
+                    # Note start
+                    note = msg.note
+                    start_sample = int(current_time * sr)
+                    active_notes[note] = (start_sample, msg.velocity)
+                    
+                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                    # Note end
+                    note = msg.note
+                    if note in active_notes:
+                        start_sample, velocity = active_notes[note]
+                        end_sample = int(current_time * sr)
+                        
+                        # Generate simple sine wave for the note
+                        frequency = 440 * (2 ** ((note - 69) / 12))  # A4 = 440Hz, note 69
+                        duration_samples = end_sample - start_sample
+                        
+                        if duration_samples > 0:
+                            t = np.linspace(0, duration_samples / sr, duration_samples)
+                            note_audio = np.sin(2 * np.pi * frequency * t) * (velocity / 127.0) * 0.3
+                            
+                            # Apply simple envelope
+                            envelope = np.exp(-t * 2)  # Decay
+                            note_audio *= envelope
+                            
+                            # Add to audio array
+                            if start_sample + duration_samples <= len(audio):
+                                audio[start_sample:start_sample + duration_samples] += note_audio
+                        
+                        del active_notes[note]
+        
+        # Normalize audio
+        if np.max(np.abs(audio)) > 0:
+            audio = audio / np.max(np.abs(audio)) * 0.8
+        
+        # Save as WAV file
+        sf.write(output_path, audio, sr)
+        
+        print(f"✓ Audio created successfully: {output_path}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error converting MIDI to audio: {e}")
+        return False
+
+def create_video_from_frames(output_dir, fps=30, video_name="hand_animation.mp4", midi_path=None):
+    """Create a video from the generated frame images with optional audio."""
     if not VIDEO_AVAILABLE:
         print("❌ Video generation libraries not available. Skipping video creation.")
         return False
     
     print(f"Creating video from frames...")
     
+    # Look for frames in the frames subdirectory
+    frames_dir = os.path.join(output_dir, "frames")
+    if not os.path.exists(frames_dir):
+        print("❌ Frames directory not found.")
+        return False
+    
     # Get all frame files
     frame_files = []
-    for file in os.listdir(output_dir):
+    for file in os.listdir(frames_dir):
         if file.startswith("smart_frame_") and file.endswith(".png"):
             frame_files.append(file)
     
@@ -371,33 +472,48 @@ def create_video_from_frames(output_dir, fps=30, video_name="hand_animation.mp4"
     # Create video writer
     video_path = os.path.join(output_dir, video_name)
     temp_video_path = os.path.join(output_dir, "temp_video.mp4")
+    temp_audio_path = os.path.join(output_dir, "temp_audio.wav")
     
     try:
+        # Create video without audio first
         with imageio.get_writer(temp_video_path, fps=fps) as writer:
             for frame_file in frame_files:
-                frame_path = os.path.join(output_dir, frame_file)
+                frame_path = os.path.join(frames_dir, frame_file)
                 frame = imageio.imread(frame_path)
                 writer.append_data(frame)
         
         # Convert to final format with better compression
         video = VideoFileClip(temp_video_path)
-        video.write_videofile(video_path, codec='libx264', audio=False)
+        
+        # Add audio if MIDI path is provided
+        if midi_path and AUDIO_AVAILABLE:
+            print("Adding audio to video...")
+            if midi_to_audio(midi_path, temp_audio_path):
+                audio = AudioFileClip(temp_audio_path)
+                video = video.with_audio(audio)
+        
+        video.write_videofile(video_path, codec='libx264')
         video.close()
         
-        # Clean up temporary file (with delay to ensure file is closed)
+        # Clean up temporary files (with delay to ensure files are closed)
         import time
-        time.sleep(0.5)  # Give time for file to be released
+        time.sleep(0.5)  # Give time for files to be released
+        
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
+        if os.path.exists(temp_audio_path):
+            os.remove(temp_audio_path)
         
         print(f"✓ Video created successfully: {video_path}")
         return True
         
     except Exception as e:
         print(f"❌ Error creating video: {e}")
-        # Clean up temporary file if it exists
+        # Clean up temporary files if they exist
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
+        if os.path.exists(temp_audio_path):
+            os.remove(temp_audio_path)
         return False
 
 def apply_pose_to_hand_model(base_points, pose_params):
@@ -427,7 +543,7 @@ def apply_pose_to_hand_model(base_points, pose_params):
     
     return transformed_points
 
-def midi_to_hands_smart(midi_path, output_dir, fps=30, skip_video=False, video_name="hand_animation.mp4"):
+def midi_to_hands_smart(midi_path, output_dir, fps=30, skip_video=False, video_name="hand_animation.mp4", include_audio=True):
     print(f"Processing MIDI file: {midi_path}")
     events, times = read_midi_general(midi_path)
     duration = times[-1] if len(times) > 0 else 0
@@ -440,8 +556,20 @@ def midi_to_hands_smart(midi_path, output_dir, fps=30, skip_video=False, video_n
     # Generate smart hand poses
     poses, piece_type = generate_smart_hand_poses(frame_roll, fps)
 
+    # Delete and recreate output directory if it exists
+    if os.path.exists(output_dir):
+        import shutil
+        print(f"Cleaning existing output directory: {output_dir}")
+        shutil.rmtree(output_dir)
+    
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Create frames subdirectory
+    frames_dir = os.path.join(output_dir, "frames")
+    os.makedirs(frames_dir, exist_ok=True)
+    
     print(f"Output directory: {output_dir}")
+    print(f"Frames directory: {frames_dir}")
 
     # Define finger colors for better visualization
     finger_colors = {
@@ -528,7 +656,7 @@ def midi_to_hands_smart(midi_path, output_dir, fps=30, skip_video=False, video_n
                fontsize=10, verticalalignment='top',
                bbox=dict(boxstyle='round', facecolor='orange', alpha=0.8))
 
-        fig.savefig(os.path.join(output_dir, f"smart_frame_{i:04d}.png"), 
+        fig.savefig(os.path.join(frames_dir, f"smart_frame_{i:04d}.png"), 
                    dpi=150, bbox_inches='tight')
         plt.close(fig)
     
@@ -537,7 +665,9 @@ def midi_to_hands_smart(midi_path, output_dir, fps=30, skip_video=False, video_n
     
     # Create video from frames
     if not skip_video:
-        video_success = create_video_from_frames(output_dir, fps, video_name)
+        # Pass MIDI path for audio if requested
+        midi_for_audio = midi_path if include_audio else None
+        video_success = create_video_from_frames(output_dir, fps, video_name, midi_for_audio)
         if video_success:
             print(f"✓ Video generation completed!")
         else:
@@ -552,8 +682,9 @@ def main():
     parser.add_argument('--fps', type=int, default=30, help='Frames per second')
     parser.add_argument('--no-video', action='store_true', help='Skip video generation')
     parser.add_argument('--video-name', default='hand_animation.mp4', help='Output video filename')
+    parser.add_argument('--no-audio', action='store_true', help='Skip audio generation in video')
     args = parser.parse_args()
-    midi_to_hands_smart(args.midi, args.out, args.fps, args.no_video, args.video_name)
+    midi_to_hands_smart(args.midi, args.out, args.fps, args.no_video, args.video_name, not args.no_audio)
 
 if __name__ == '__main__':
     main() 
