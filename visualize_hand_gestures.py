@@ -11,6 +11,7 @@ Features:
 - Animation playback with adjustable speed
 - Export capabilities for individual frames or animations
 - Real-time statistics and motion analysis
+- Piano keyboard visualization with key press detection
 - Standalone operation - no external dependencies beyond plotting libraries
 """
 
@@ -54,6 +55,13 @@ class StandaloneHandGestureVisualizer:
         self.mano_joint_connections = self.metadata.get('mano_joint_connections', [])
         self.finger_groups = self.metadata.get('finger_groups', {})
         
+        # Extract keyboard information
+        self.keyboard_info = self.data.get('keyboard_info', {})
+        self.keyboard_width = self.keyboard_info.get('total_width', 1.2)
+        self.key_count = self.keyboard_info.get('key_count', 88)
+        self.white_keys = self.keyboard_info.get('white_keys', 52)
+        self.white_key_width = self.keyboard_info.get('white_key_width', 0.023)
+        
         # Animation state
         self.current_frame = 0
         self.is_playing = False
@@ -63,11 +71,13 @@ class StandaloneHandGestureVisualizer:
         self.show_labels = True
         self.show_connections = True
         self.auto_scale = True
+        self.show_keyboard = True  # New setting for keyboard visualization
         
         print(f"Loaded {self.num_frames} frames from {json_file_path}")
         print(f"Data format: {self.metadata.get('data_format', 'unknown')}")
         print(f"Joints per hand: {self.metadata.get('joints_per_hand', 'unknown')}")
         print(f"View mode: {self.view_mode.upper()}")
+        print(f"Keyboard info: {self.key_count} keys, {self.white_keys} white keys, width: {self.keyboard_width}m")
     
     def load_data(self) -> Dict:
         """
@@ -301,6 +311,9 @@ class StandaloneHandGestureVisualizer:
         """
         left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
         
+        # Detect pressed keys
+        pressed_keys = self.detect_pressed_keys(left_hand, right_hand)
+        
         fig = plt.figure(figsize=(12, 10))
         
         if self.view_mode == '3d':
@@ -312,6 +325,10 @@ class StandaloneHandGestureVisualizer:
                              f"Left Hand - Frame {frame_idx}", 'blue', ax, alpha=0.8)
             self.plot_hand_3d(right_hand, self.mano_joint_connections, 
                              f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
+            
+            # Add piano keyboard - position it in front of the hands (lower Z value)
+            keyboard_z = 18.5  # Position keyboard in front of hands (hands are at ~19)
+            self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=0.05, keyboard_z=keyboard_z)
             
             # Set consistent view angle
             ax.view_init(elev=20, azim=45)
@@ -334,6 +351,9 @@ class StandaloneHandGestureVisualizer:
                                     f"Left Hand - Frame {frame_idx}", 'blue', ax, self.show_labels)
             self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
                                     f"Right Hand - Frame {frame_idx}", 'red', ax, self.show_labels, add_to_existing=True)
+            
+            # Add piano keyboard - position it below the hands
+            self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=0.05)
             
             # Set consistent scaling for both hands
             if self.auto_scale:
@@ -360,6 +380,228 @@ class StandaloneHandGestureVisualizer:
         
         plt.show()
     
+    def create_piano_keyboard(self) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Create piano keyboard layout with white and black keys.
+        
+        Returns:
+            Tuple of (white_keys, black_keys) where each key is a dict with position and note info
+        """
+        white_keys = []
+        black_keys = []
+        
+        # Standard piano layout: C, D, E, F, G, A, B pattern
+        white_key_notes = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
+        black_key_notes = ['C#', 'D#', '', 'F#', 'G#', 'A#', '']
+        
+        # Calculate key positions
+        current_x = 0
+        octave = 0
+        
+        for i in range(self.white_keys):
+            # White key
+            note = white_key_notes[i % 7]
+            full_note = f"{note}{octave + (i // 7)}"
+            
+            white_keys.append({
+                'x': current_x,
+                'width': self.white_key_width,
+                'note': full_note,
+                'midi_note': 21 + i,  # A0 = 21, C1 = 24, etc.
+                'octave': octave + (i // 7)
+            })
+            
+            # Add black key if applicable (except between E-F and B-C)
+            if i % 7 in [0, 1, 3, 4, 5]:  # C, D, F, G, A
+                black_note = black_key_notes[i % 7]
+                if black_note:  # Skip empty slots
+                    black_keys.append({
+                        'x': current_x + self.white_key_width * 0.6,  # Position black key
+                        'width': self.white_key_width * 0.6,
+                        'note': f"{black_note}{octave + (i // 7)}",
+                        'midi_note': 22 + i + (i // 7),  # Approximate MIDI note
+                        'octave': octave + (i // 7)
+                    })
+            
+            current_x += self.white_key_width
+            
+            # Increment octave every 7 white keys
+            if (i + 1) % 7 == 0:
+                octave += 1
+        
+        return white_keys, black_keys
+    
+    def detect_pressed_keys(self, left_hand: np.ndarray, right_hand: np.ndarray, 
+                          threshold: float = 0.1) -> List[Dict]:
+        """
+        Detect which keys are being pressed based on hand positions.
+        
+        Args:
+            left_hand: Left hand joint coordinates (21, 3)
+            right_hand: Right hand joint coordinates (21, 3)
+            threshold: Distance threshold for key press detection
+            
+        Returns:
+            List of pressed keys with their information
+        """
+        pressed_keys = []
+        
+        # Get keyboard layout
+        white_keys, black_keys = self.create_piano_keyboard()
+        all_keys = white_keys + black_keys
+        
+        # Check fingertips (joints 4, 8, 12, 16, 20) for both hands
+        fingertip_indices = [4, 8, 12, 16, 20]
+        
+        for hand_name, hand_joints in [('left', left_hand), ('right', right_hand)]:
+            for tip_idx in fingertip_indices:
+                if tip_idx < len(hand_joints):
+                    tip_pos = hand_joints[tip_idx]
+                    
+                    # Check distance to each key
+                    for key in all_keys:
+                        key_x = key['x']
+                        # Use keyboard position that matches the visualization
+                        key_pos = np.array([key_x, 0.05, 18.5])
+                        
+                        distance = np.linalg.norm(tip_pos - key_pos)
+                        
+                        if distance < threshold:
+                            pressed_keys.append({
+                                'key': key,
+                                'hand': hand_name,
+                                'finger': tip_idx,
+                                'distance': distance,
+                                'position': tip_pos
+                            })
+        
+        return pressed_keys
+    
+    def plot_piano_keyboard(self, ax, pressed_keys: List[Dict] = None, 
+                          keyboard_y: float = 0.05, keyboard_z: float = 18.5):
+        """
+        Plot piano keyboard in 3D space.
+        
+        Args:
+            ax: Matplotlib axis (3D or 2D)
+            pressed_keys: List of currently pressed keys
+            keyboard_y: Y position of keyboard
+            keyboard_z: Z position of keyboard
+        """
+        if not self.show_keyboard:
+            return
+            
+        white_keys, black_keys = self.create_piano_keyboard()
+        
+        # Create sets of pressed key notes for quick lookup
+        pressed_notes = set()
+        if pressed_keys:
+            pressed_notes = {key['key']['note'] for key in pressed_keys}
+        
+        # Plot white keys
+        for key in white_keys:
+            x = key['x']
+            width = key['width']
+            note = key['note']
+            
+            # Determine color based on whether key is pressed
+            if note in pressed_notes:
+                color = 'red'  # Pressed keys are red
+                alpha = 0.8
+            else:
+                color = 'white'
+                alpha = 0.6
+            
+            if self.view_mode == '3d':
+                # 3D keyboard visualization
+                from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+                
+                # Create 3D rectangle for key
+                vertices = np.array([
+                    [x, keyboard_y, keyboard_z],
+                    [x + width, keyboard_y, keyboard_z],
+                    [x + width, keyboard_y + 0.15, keyboard_z],  # Key length
+                    [x, keyboard_y + 0.15, keyboard_z]
+                ])
+                
+                # Create faces for 3D key
+                faces = [
+                    [vertices[0], vertices[1], vertices[2], vertices[3]],  # Top face
+                    [vertices[0], vertices[1], vertices[1] + [0, 0, 0.02], vertices[0] + [0, 0, 0.02]],  # Front face
+                    [vertices[1], vertices[2], vertices[2] + [0, 0, 0.02], vertices[1] + [0, 0, 0.02]],  # Right face
+                    [vertices[2], vertices[3], vertices[3] + [0, 0, 0.02], vertices[2] + [0, 0, 0.02]],  # Back face
+                    [vertices[3], vertices[0], vertices[0] + [0, 0, 0.02], vertices[3] + [0, 0, 0.02]]   # Left face
+                ]
+                
+                poly3d = Poly3DCollection(faces, alpha=alpha, facecolor=color, edgecolor='black', linewidth=0.5)
+                ax.add_collection3d(poly3d)
+                
+                # Add note label
+                ax.text(x + width/2, keyboard_y + 0.075, keyboard_z + 0.03, 
+                       note, fontsize=8, ha='center', va='center')
+            else:
+                # 2D keyboard visualization
+                rect = plt.Rectangle((x, keyboard_y), width, 0.15, 
+                                   facecolor=color, edgecolor='black', 
+                                   linewidth=1, alpha=alpha)
+                ax.add_patch(rect)
+                
+                # Add note label
+                ax.text(x + width/2, keyboard_y + 0.075, note, 
+                       fontsize=8, ha='center', va='center')
+        
+        # Plot black keys
+        for key in black_keys:
+            x = key['x']
+            width = key['width']
+            note = key['note']
+            
+            # Determine color based on whether key is pressed
+            if note in pressed_notes:
+                color = 'darkred'  # Pressed black keys are dark red
+                alpha = 0.9
+            else:
+                color = 'black'
+                alpha = 0.8
+            
+            if self.view_mode == '3d':
+                # 3D black key visualization
+                from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+                
+                # Create 3D rectangle for black key
+                vertices = np.array([
+                    [x, keyboard_y, keyboard_z],
+                    [x + width, keyboard_y, keyboard_z],
+                    [x + width, keyboard_y + 0.095, keyboard_z],  # Black key length
+                    [x, keyboard_y + 0.095, keyboard_z]
+                ])
+                
+                # Create faces for 3D black key
+                faces = [
+                    [vertices[0], vertices[1], vertices[2], vertices[3]],  # Top face
+                    [vertices[0], vertices[1], vertices[1] + [0, 0, 0.02], vertices[0] + [0, 0, 0.02]],  # Front face
+                    [vertices[1], vertices[2], vertices[2] + [0, 0, 0.02], vertices[1] + [0, 0, 0.02]],  # Right face
+                    [vertices[2], vertices[3], vertices[3] + [0, 0, 0.02], vertices[2] + [0, 0, 0.02]],  # Back face
+                    [vertices[3], vertices[0], vertices[0] + [0, 0, 0.02], vertices[3] + [0, 0, 0.02]]   # Left face
+                ]
+                
+                poly3d = Poly3DCollection(faces, alpha=alpha, facecolor=color, edgecolor='gray', linewidth=0.5)
+                ax.add_collection3d(poly3d)
+                
+                # Add note label
+                ax.text(x + width/2, keyboard_y + 0.0475, keyboard_z + 0.03, 
+                       note, fontsize=6, ha='center', va='center', color='white')
+            else:
+                # 2D black key visualization
+                rect = plt.Rectangle((x, keyboard_y), width, 0.095, 
+                                   facecolor=color, edgecolor='gray', 
+                                   linewidth=1, alpha=alpha)
+                ax.add_patch(rect)
+                
+                # Add note label
+                ax.text(x + width/2, keyboard_y + 0.0475, note, 
+                       fontsize=6, ha='center', va='center', color='white')
+
     def create_interactive_visualizer(self):
         """
         Create an interactive visualization with controls for frame navigation and playback.
@@ -380,6 +622,7 @@ class StandaloneHandGestureVisualizer:
         ax_speed = fig.add_axes([0.25, 0.15, 0.15, 0.04])
         ax_export = fig.add_axes([0.45, 0.15, 0.1, 0.04])
         ax_stats_btn = fig.add_axes([0.6, 0.15, 0.1, 0.04])
+        ax_keyboard_btn = fig.add_axes([0.75, 0.15, 0.1, 0.04])
         
         # Initialize visualization
         left_hand, right_hand, left_info, right_info = self.get_frame_data(0)
@@ -425,6 +668,7 @@ class StandaloneHandGestureVisualizer:
         speed_button = Button(ax_speed, 'Speed: 1x')
         export_button = Button(ax_export, 'Export')
         stats_button = Button(ax_stats_btn, 'Stats')
+        keyboard_button = Button(ax_keyboard_btn, 'Keyboard: ON')
         
         # Statistics text
         stats_text = ax_stats.text(0.1, 0.9, "Click 'Stats' to view motion statistics", 
@@ -439,6 +683,9 @@ class StandaloneHandGestureVisualizer:
             frame_idx = int(slider.val)
             left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
+            # Detect pressed keys
+            pressed_keys = self.detect_pressed_keys(left_hand, right_hand)
+            
             # Clear previous plots
             ax.clear()
             
@@ -448,6 +695,9 @@ class StandaloneHandGestureVisualizer:
                                 f"Left Hand - Frame {frame_idx}", 'blue', ax, alpha=0.8)
                 self.plot_hand_3d(right_hand, self.mano_joint_connections, 
                                 f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
+                
+                # Add piano keyboard
+                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1, keyboard_z=0)
                 
                 # Set consistent view angle
                 ax.view_init(elev=20, azim=45)
@@ -465,6 +715,9 @@ class StandaloneHandGestureVisualizer:
                                         f"Left Hand - Frame {frame_idx}", 'blue', ax, self.show_labels)
                 self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
                                         f"Right Hand - Frame {frame_idx}", 'red', ax, self.show_labels, add_to_existing=True)
+                
+                # Add piano keyboard
+                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1)
                 
                 # Set consistent scaling for both hands
                 if self.auto_scale:
@@ -544,12 +797,21 @@ Right Hand:
                          fontsize=9, verticalalignment='top',
                          bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgray', alpha=0.8))
         
+        def toggle_keyboard(event):
+            """Toggle keyboard visualization on/off."""
+            nonlocal self
+            self.show_keyboard = not self.show_keyboard
+            keyboard_button.label.set_text(f'Keyboard: {"ON" if self.show_keyboard else "OFF"}')
+            # Update the current frame to show/hide keyboard
+            update_frame(slider.val)
+        
         # Connect events
         slider.on_changed(update_frame)
         play_button.on_clicked(play_animation)
         speed_button.on_clicked(change_speed)
         export_button.on_clicked(export_frame)
         stats_button.on_clicked(show_stats)
+        keyboard_button.on_clicked(toggle_keyboard)
         
         plt.suptitle('Standalone Interactive Hand Gesture Visualizer', fontsize=16, fontweight='bold')
         plt.tight_layout()
@@ -607,6 +869,9 @@ Right Hand:
             """Animation function for each frame."""
             left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
+            # Detect pressed keys
+            pressed_keys = self.detect_pressed_keys(left_hand, right_hand)
+            
             # Clear previous plots
             ax.clear()
             
@@ -616,6 +881,9 @@ Right Hand:
                                 f"Left Hand - Frame {frame_idx}", 'blue', ax, alpha=0.8)
                 self.plot_hand_3d(right_hand, self.mano_joint_connections, 
                                 f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
+                
+                # Add piano keyboard
+                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1, keyboard_z=0)
                 
                 # Set consistent view angle
                 ax.view_init(elev=20, azim=45)
@@ -629,6 +897,9 @@ Right Hand:
                                         f"Left Hand - Frame {frame_idx}", 'blue', ax, False)
                 self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
                                         f"Right Hand - Frame {frame_idx}", 'red', ax, False, add_to_existing=True)
+                
+                # Add piano keyboard
+                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1)
                 
                 # Use global axis limits for consistency
                 ax.set_xlim(global_xlim)
@@ -664,11 +935,17 @@ def main():
     parser.add_argument('--output', default='hand_gesture_animation.gif', 
                        help='Output path for animation (for animation mode)')
     parser.add_argument('--fps', type=int, default=10, help='FPS for animation')
+    parser.add_argument('--no-keyboard', action='store_true', 
+                       help='Disable keyboard visualization')
     
     args = parser.parse_args()
     
     # Create visualizer with specified view mode
     visualizer = StandaloneHandGestureVisualizer(args.json_file, args.view)
+    
+    # Set keyboard visibility
+    if args.no_keyboard:
+        visualizer.show_keyboard = False
     
     # Run appropriate mode
     if args.mode == 'single':
