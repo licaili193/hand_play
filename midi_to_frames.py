@@ -820,8 +820,8 @@ def validate_audio_quality(audio_wave, sample_rate=16000):
     return len(warnings) == 0
 
 # Paths (adjust these to your setup)
-MIDI_PATH = "examples\\example_2.mid"            # Input MIDI file
-AUDIO_PATH = "examples\\example_2.wav"           # Temporary audio file path
+MIDI_PATH = "examples\\example_1.mid"            # Input MIDI file
+AUDIO_PATH = "examples\\example_1.wav"           # Temporary audio file path
 CHECKPOINT_PATH = "PianoMotion10M\\checkpoints\\diffusion_posiguide_hubertlarge_tf2\\piano2pose-iter=90000-val_loss=0.0364401508122683.ckpt"  # Downloaded model checkpoint
 OUTPUT_JSON = "predicted_hand_motion.json"      # Output JSON path
 
