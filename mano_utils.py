@@ -354,6 +354,41 @@ def save_joint_mapping_info(total_joints, joints_per_hand, output_path="joint_ma
         json.dump(joint_mapping_info, f, indent=2)
     print(f"Saved joint mapping information to {output_path}")
 
+def set_uniform_axes_3d(ax):
+    """
+    Set uniform tick spacing and grid for 3D axes.
+    
+    Args:
+        ax: matplotlib 3D axis object
+    """
+    # Get current axis limits
+    x_lim = ax.get_xlim()
+    y_lim = ax.get_ylim()
+    z_lim = ax.get_zlim()
+    
+    # Calculate the range for each axis
+    x_range = x_lim[1] - x_lim[0]
+    y_range = y_lim[1] - y_lim[0]
+    z_range = z_lim[1] - z_lim[0]
+    
+    # Find the maximum range to determine uniform tick spacing
+    max_range = max(x_range, y_range, z_range)
+    
+    # Calculate number of ticks (aim for 5-8 ticks per axis)
+    num_ticks = 6
+    tick_spacing = max_range / num_ticks
+    
+    # Set uniform tick spacing for all axes
+    ax.set_xticks(np.arange(x_lim[0], x_lim[1] + tick_spacing, tick_spacing))
+    ax.set_yticks(np.arange(y_lim[0], y_lim[1] + tick_spacing, tick_spacing))
+    ax.set_zticks(np.arange(z_lim[0], z_lim[1] + tick_spacing, tick_spacing))
+    
+    # Enable grid with uniform spacing
+    ax.grid(True, alpha=0.3)
+    
+    # Set aspect ratio to be equal for all axes
+    ax.set_box_aspect([1, 1, 1])
+
 def visualize_hand_3d(coords, title="Hand", ax=None, show_labels=True):
     """
     Visualize a single hand in 3D with proper finger coloring and connections.
@@ -425,6 +460,9 @@ def visualize_hand_3d(coords, title="Hand", ax=None, show_labels=True):
     ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
     ax.legend(loc='upper right', fontsize=8)
     
+    # Set uniform tick spacing and grid
+    set_uniform_axes_3d(ax)
+    
     return ax
 
 def visualize_both_hands_3d(left_hand_joints, right_hand_joints, frame_idx=0, total_frames=1):
@@ -448,6 +486,10 @@ def visualize_both_hands_3d(left_hand_joints, right_hand_joints, frame_idx=0, to
     right_coords = np.array(right_hand_joints)
     ax2 = fig.add_subplot(1, 2, 2, projection='3d')
     visualize_hand_3d(right_coords, "Right Hand", ax2)
+    
+    # Set uniform axes for both plots
+    set_uniform_axes_3d(ax1)
+    set_uniform_axes_3d(ax2)
     
     plt.suptitle(f'Hand Motion Visualization - Frame {frame_idx} of {total_frames-1}\nUsing Anatomically Precise MANO Joint Connections', 
                 fontsize=16, fontweight='bold', y=0.95)
