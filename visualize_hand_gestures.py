@@ -155,9 +155,12 @@ class StandaloneHandGestureVisualizer:
         left_avg_velocities = [v['left_hand_avg_velocity'] for v in velocities]
         right_avg_velocities = [v['right_hand_avg_velocity'] for v in velocities]
         
+        # Get FPS from metadata if available, otherwise use default
+        fps = self.data.get('metadata', {}).get('fps', 30.0)
+        
         stats = {
             'total_frames': self.num_frames,
-            'duration_seconds': self.num_frames / 30.0,  # Assuming 30 FPS
+            'duration_seconds': self.num_frames / fps,  # Using detected FPS
             'left_hand_stats': {
                 'max_velocity': max(left_avg_velocities),
                 'min_velocity': min(left_avg_velocities),

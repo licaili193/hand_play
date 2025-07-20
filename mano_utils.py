@@ -542,6 +542,7 @@ def visualize_with_correct_coordinates(processed_data, frame_idx=0):
     
     # Get coordinate system information
     coord_info = processed_data.get('coordinate_info', {})
+    detected_convention = processed_data.get('coordinate_system', {}).get('convention', {})
     
     # Extract data for visualization
     right_pos = processed_data['right_hand_position'][frame_idx]
@@ -555,6 +556,11 @@ def visualize_with_correct_coordinates(processed_data, frame_idx=0):
     print(f"  Right hand angles range: [{np.min(right_angles):.3f}, {np.max(right_angles):.3f}] rad")
     print(f"  Left hand angles range: [{np.min(left_angles):.3f}, {np.max(left_angles):.3f}] rad")
     
+    # Use detected coordinate system labels if available
+    x_label = detected_convention.get('x_axis', 'X (Lateral)')
+    y_label = detected_convention.get('y_axis', 'Y (Vertical)')
+    z_label = detected_convention.get('z_axis', 'Z (Depth)')
+    
     # Create 3D visualization with proper coordinate system
     fig = plt.figure(figsize=(15, 5))
     
@@ -565,9 +571,9 @@ def visualize_with_correct_coordinates(processed_data, frame_idx=0):
     ax1.scatter(left_pos[0], left_pos[1], left_pos[2], 
                c='blue', s=100, label='Left Hand', alpha=0.8)
     
-    ax1.set_xlabel('X (Lateral)')
-    ax1.set_ylabel('Y (Vertical)')
-    ax1.set_zlabel('Z (Depth)')
+    ax1.set_xlabel(x_label)
+    ax1.set_ylabel(y_label)
+    ax1.set_zlabel(z_label)
     ax1.set_title('Hand Positions\n(Scaled World Coordinates)')
     ax1.legend()
     
@@ -589,13 +595,13 @@ def visualize_with_correct_coordinates(processed_data, frame_idx=0):
     
     # X-axis (red)
     ax3.quiver(origin[0], origin[1], origin[2], axes_length, 0, 0, 
-              color='red', arrow_length_ratio=0.1, label='X (Lateral)')
+              color='red', arrow_length_ratio=0.1, label=x_label)
     # Y-axis (green)
     ax3.quiver(origin[0], origin[1], origin[2], 0, axes_length, 0, 
-              color='green', arrow_length_ratio=0.1, label='Y (Vertical)')
+              color='green', arrow_length_ratio=0.1, label=y_label)
     # Z-axis (blue)
     ax3.quiver(origin[0], origin[1], origin[2], 0, 0, axes_length, 
-              color='blue', arrow_length_ratio=0.1, label='Z (Depth)')
+              color='blue', arrow_length_ratio=0.1, label=z_label)
     
     ax3.set_xlabel('X')
     ax3.set_ylabel('Y')
@@ -719,145 +725,6 @@ def explain_pianomotion_mano_integration():
     
     return integration_info
 
-def convert_mano_params_to_joints(hand_position, hand_rotations, hand='right'):
-    """
-    Convert MANO parameters (position + rotations) to joint positions.
-    
-    Note: PianoMotion10M outputs 48 rotation parameters, not 21 joint positions.
-    This function creates a reasonable joint mapping from the MANO parameters.
-    
-    Args:
-        hand_position: (3,) array - 3D position of hand
-        hand_rotations: (48,) array - MANO rotation parameters
-        hand: 'right' or 'left'
-    
-    Returns:
-        joint_positions: (21, 3) array - 3D positions of MANO joints
-    """
-    
-    # PianoMotion10M outputs 48 rotation parameters, not 21 joint positions
-    # The MANO model is designed for mesh rendering, not joint extraction
-    # For visualization purposes, we'll create a reasonable joint mapping
-    
-    if len(hand_rotations) != 48:
-        print(f"✗ Expected 48 rotation parameters, got {len(hand_rotations)}")
-        print("  Falling back to simplified joint approximation")
-        return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
-    
-    print(f"Converting 48 MANO parameters to 21 joint positions for {hand} hand")
-    
-    # Parse MANO parameters according to PianoMotion10M format:
-    # - First 3: Global orientation (root rotation)
-    # - Next 45: Hand pose (15 joints × 3 rotations each)
-    global_orient = hand_rotations[:3]  # First 3 parameters
-    hand_pose = hand_rotations[3:48]    # Next 45 parameters (15 joints × 3)
-    
-    # Create a more sophisticated joint mapping based on the rotation parameters
-    # This is an approximation that uses the rotation parameters to influence joint positions
-    
-    # Basic hand structure (relative to wrist)
-    if hand == 'right':
-        hand_sign = 1
-    else:
-        hand_sign = -1  # Mirror for left hand
-    
-    # Approximate joint offsets (in hand coordinate system)
-    joint_offsets = np.array([
-        [0, 0, 0],                           # 0: Wrist
-        [hand_sign * 0.02, 0.01, 0.02],     # 1: Thumb CMC
-        [hand_sign * 0.03, 0.02, 0.04],     # 2: Thumb MCP
-        [hand_sign * 0.035, 0.03, 0.055],   # 3: Thumb IP
-        [hand_sign * 0.04, 0.035, 0.07],    # 4: Thumb Tip
-        [hand_sign * 0.02, 0.08, 0.01],     # 5: Index MCP
-        [hand_sign * 0.02, 0.11, 0.015],    # 6: Index PIP
-        [hand_sign * 0.02, 0.135, 0.02],    # 7: Index DIP
-        [hand_sign * 0.02, 0.155, 0.025],   # 8: Index Tip
-        [0, 0.09, 0.005],                   # 9: Middle MCP
-        [0, 0.125, 0.01],                   # 10: Middle PIP
-        [0, 0.15, 0.015],                   # 11: Middle DIP
-        [0, 0.17, 0.02],                    # 12: Middle Tip
-        [hand_sign * -0.02, 0.085, 0],      # 13: Ring MCP
-        [hand_sign * -0.02, 0.115, 0.005],  # 14: Ring PIP
-        [hand_sign * -0.02, 0.14, 0.01],    # 15: Ring DIP
-        [hand_sign * -0.02, 0.16, 0.015],   # 16: Ring Tip
-        [hand_sign * -0.04, 0.075, -0.005], # 17: Little MCP
-        [hand_sign * -0.04, 0.1, 0],        # 18: Little PIP
-        [hand_sign * -0.04, 0.12, 0.005],   # 19: Little DIP
-        [hand_sign * -0.04, 0.135, 0.01]    # 20: Little Tip
-    ])
-    
-    # Apply global orientation influence
-    if len(global_orient) >= 3:
-        # Use global orientation to rotate the entire hand
-        global_rot_x = global_orient[0] * 0.1  # Scale down
-        global_rot_y = global_orient[1] * 0.1
-        global_rot_z = global_orient[2] * 0.1
-        
-        # Apply rotations around each axis
-        for i in range(len(joint_offsets)):
-            x, y, z = joint_offsets[i]
-            
-            # Rotate around X-axis
-            y_new = y * np.cos(global_rot_x) - z * np.sin(global_rot_x)
-            z_new = y * np.sin(global_rot_x) + z * np.cos(global_rot_x)
-            y, z = y_new, z_new
-            
-            # Rotate around Y-axis
-            x_new = x * np.cos(global_rot_y) + z * np.sin(global_rot_y)
-            z_new = -x * np.sin(global_rot_y) + z * np.cos(global_rot_y)
-            x, z = x_new, z_new
-            
-            # Rotate around Z-axis
-            x_new = x * np.cos(global_rot_z) - y * np.sin(global_rot_z)
-            y_new = x * np.sin(global_rot_z) + y * np.cos(global_rot_z)
-            x, y = x_new, y_new
-            
-            joint_offsets[i] = [x, y, z]
-    
-    # Apply finger-specific rotations from hand pose parameters
-    if len(hand_pose) >= 45:
-        # Map hand pose parameters to finger rotations
-        # Each finger has 3 joints with 3 rotation parameters each = 9 parameters per finger
-        finger_params = hand_pose.reshape(5, 9)  # 5 fingers, 9 params each
-        
-        for finger_idx in range(5):
-            if finger_idx < len(finger_params):
-                finger_rot = finger_params[finger_idx]
-                
-                # Apply finger-specific rotations
-                # This is a simplified mapping - in reality, MANO has more complex joint relationships
-                if finger_idx == 0:  # Thumb
-                    joint_indices = [1, 2, 3, 4]
-                elif finger_idx == 1:  # Index
-                    joint_indices = [5, 6, 7, 8]
-                elif finger_idx == 2:  # Middle
-                    joint_indices = [9, 10, 11, 12]
-                elif finger_idx == 3:  # Ring
-                    joint_indices = [13, 14, 15, 16]
-                else:  # Little
-                    joint_indices = [17, 18, 19, 20]
-                
-                # Apply rotation to finger joints
-                for i, joint_idx in enumerate(joint_indices):
-                    if joint_idx < len(joint_offsets) and i < 3:
-                        rot_factor = finger_rot[i] * 0.05  # Scale down
-                        x, y, z = joint_offsets[joint_idx]
-                        
-                        # Simple rotation around Y-axis (finger curl)
-                        cos_r = np.cos(rot_factor)
-                        sin_r = np.sin(rot_factor)
-                        joint_offsets[joint_idx, 0] = x * cos_r - z * sin_r
-                        joint_offsets[joint_idx, 2] = x * sin_r + z * cos_r
-    
-    # Translate to world position
-    joints = joint_offsets + hand_position
-    
-    print(f"✓ Created MANO-based joints for {hand} hand ({len(joints)} joints)")
-    print(f"  - Used {len(global_orient)} global orientation parameters")
-    print(f"  - Used {len(hand_pose)} hand pose parameters")
-    
-    return joints
-
 def approximate_joints_from_parameters(hand_position, hand_rotations, hand='right'):
     """
     Create approximate joint positions when full MANO is not available.
@@ -956,8 +823,8 @@ def visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=True):
     # Convert MANO parameters to joint positions
     try:
         if use_full_mano:
-            right_joints = convert_mano_params_to_joints(right_pos, right_angles, 'right')
-            left_joints = convert_mano_params_to_joints(left_pos, left_angles, 'left')
+            right_joints = convert_mano_params_robust(right_pos, right_angles, 'right')
+            left_joints = convert_mano_params_robust(left_pos, left_angles, 'left')
         else:
             right_joints = approximate_joints_from_parameters(right_pos, right_angles, 'right')
             left_joints = approximate_joints_from_parameters(left_pos, left_angles, 'left')
@@ -1123,9 +990,9 @@ def use_official_rendering_if_available(right_data, left_data, audio_array):
         print("Falling back to custom visualization")
         return False
 
-def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'):
+def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu', midi_path=None):
     """
-    Complete pipeline with proper MANO integration.
+    Complete pipeline with proper MANO integration and hand ordering verification.
     """
     
     # Explain the integration
@@ -1140,7 +1007,7 @@ def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'
         if current_dir not in sys.path:
             sys.path.insert(0, current_dir)
         
-        from midi_to_frames import process_model_output_with_proper_coordinates
+        from midi_to_frames import process_model_output_with_proper_coordinates, verify_and_correct_hand_ordering
         print("✓ Using proper coordinate processing from midi_to_frames.py")
     except ImportError as e:
         print(f"⚠ Could not import proper processing function: {e}")
@@ -1148,8 +1015,21 @@ def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'
         # Fall back to the local version
         processed_data = process_model_output_with_proper_coordinates(pose_hat, guide, device)
     else:
+        # First, verify and correct hand ordering
+        print("Step 3.1: Verifying hand ordering...")
+        verified_guide, verified_pose, was_swapped = verify_and_correct_hand_ordering(
+            guide, pose_hat, midi_path
+        )
+        
         # Use the proper processing function with coordinate transformations
-        processed_data = process_model_output_with_proper_coordinates(pose_hat, guide, device)
+        processed_data = process_model_output_with_proper_coordinates(verified_pose, verified_guide, device)
+        
+        # Add hand ordering metadata
+        processed_data['hand_ordering_corrected'] = was_swapped
+        if was_swapped:
+            print("✓ Hand ordering was corrected during processing")
+        else:
+            print("✓ Hand ordering was verified as correct")
     
     # Try official rendering first
     right_data, left_data = prepare_data_for_official_rendering(processed_data)
@@ -1168,3 +1048,497 @@ def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'
             visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=False)
     
     return processed_data, integration_info 
+
+def determine_mano_parameter_structure(sample_rotations):
+    """Determine the correct MANO parameter structure through testing."""
+    
+    print("Determining MANO parameter structure...")
+    
+    # Based on official PianoMotion10M code analysis, we know the correct structure
+    # Official rendering uses: position(3) + global_orient(3) + hand_pose(45) = 51 total
+    # But our model outputs 48 rotation parameters, so we need to determine the structure
+    
+    # Test different interpretations
+    test_position = np.array([0, 0.1, 0.2])  # Sample hand position
+    
+    # Test each interpretation
+    best_interpretation, results = test_parameter_interpretations(test_position, sample_rotations)
+    
+    if best_interpretation:
+        print(f"✓ Detected parameter structure: {best_interpretation}")
+        return best_interpretation
+    else:
+        print("⚠ Could not determine parameter structure, using fallback")
+        return "standard_mano"  # Conservative fallback
+
+def test_parameter_interpretations(hand_position, hand_rotations):
+    """Test different ways to interpret the 48 rotation parameters."""
+    
+    interpretations = {
+        "standard_mano": {
+            "global_orient": hand_rotations[:3],
+            "hand_pose": hand_rotations[3:48],
+            "description": "Standard MANO: 3 global + 45 pose"
+        },
+        "all_pose": {
+            "global_orient": np.zeros(3),
+            "hand_pose": hand_rotations[:48],
+            "description": "All pose: 0 global + 48 pose"
+        },
+        "extended_global": {
+            "global_orient": hand_rotations[:6],
+            "hand_pose": hand_rotations[6:48],
+            "description": "Extended global: 6 global + 42 pose"
+        },
+        "pianomotion_style": {
+            "global_orient": hand_rotations[:3],
+            "hand_pose": hand_rotations[3:48],
+            "description": "PianoMotion10M style: 3 global + 45 pose (but different interpretation)"
+        }
+    }
+    
+    results = {}
+    
+    for name, config in interpretations.items():
+        try:
+            print(f"\nTesting {name}: {config['description']}")
+            
+            # Try to create joint positions with this interpretation
+            joints = convert_mano_params_with_structure(
+                hand_position, 
+                config['global_orient'], 
+                config['hand_pose'],
+                name
+            )
+            
+            # Validate the resulting joint positions
+            validation_score = validate_joint_positions(joints, name)
+            
+            results[name] = {
+                'joints': joints,
+                'validation_score': validation_score,
+                'success': True
+            }
+            
+            print(f"  ✓ Success: {name} produced valid joints (score: {validation_score:.2f})")
+            
+        except Exception as e:
+            print(f"  ✗ Failed: {name} - {e}")
+            results[name] = {'success': False, 'error': str(e)}
+    
+    # Compare results
+    successful_interpretations = {k: v for k, v in results.items() if v.get('success', False)}
+    
+    if successful_interpretations:
+        best_interpretation = max(
+            successful_interpretations.items(), 
+            key=lambda x: x[1]['validation_score']
+        )
+        print(f"\n🏆 Best interpretation: {best_interpretation[0]} (score: {best_interpretation[1]['validation_score']:.2f})")
+        return best_interpretation[0], results
+    else:
+        print("\n⚠ No interpretation produced valid results")
+        return None, results
+
+def convert_mano_params_with_structure(hand_position, global_orient, hand_pose, method_name):
+    """Convert MANO parameters to joint positions with specified structure."""
+    
+    print(f"  Converting with {method_name}:")
+    print(f"    Global orient shape: {global_orient.shape if hasattr(global_orient, 'shape') else len(global_orient)}")
+    print(f"    Hand pose shape: {hand_pose.shape if hasattr(hand_pose, 'shape') else len(hand_pose)}")
+    
+    # Use the appropriate conversion method based on parameter structure
+    if len(global_orient) == 3 and len(hand_pose) == 45:
+        # Standard MANO structure
+        return convert_with_standard_mano(hand_position, global_orient, hand_pose)
+    elif len(global_orient) == 0 and len(hand_pose) == 48:
+        # All pose parameters
+        return convert_with_all_pose(hand_position, hand_pose)
+    else:
+        # Custom structure - use approximation
+        return convert_with_custom_structure(hand_position, global_orient, hand_pose)
+
+def validate_joint_positions(joints, method_name):
+    """Validate joint positions and return a quality score."""
+    
+    if joints is None or len(joints) == 0:
+        return 0.0
+    
+    score = 0.0
+    max_score = 6.0
+    
+    # Check 1: Reasonable number of joints (expecting 21)
+    if len(joints) == 21:
+        score += 1.0
+        print(f"    ✓ Correct joint count: 21")
+    else:
+        print(f"    ⚠ Unexpected joint count: {len(joints)}")
+    
+    # Check 2: Realistic joint positions (not NaN, not extreme values)
+    if not np.any(np.isnan(joints)) and not np.any(np.isinf(joints)):
+        score += 1.0
+        print(f"    ✓ No NaN/Inf values")
+    else:
+        print(f"    ⚠ Contains NaN/Inf values")
+    
+    # Check 3: Reasonable coordinate ranges
+    joint_range = np.ptp(joints, axis=0)  # Range in each dimension
+    if all(0.01 <= r <= 0.5 for r in joint_range):  # 1cm to 50cm range
+        score += 1.0
+        print(f"    ✓ Reasonable coordinate ranges: {joint_range}")
+    else:
+        print(f"    ⚠ Extreme coordinate ranges: {joint_range}")
+    
+    # Check 4: Hand structure (fingers extend from wrist)
+    wrist_pos = joints[0]
+    finger_distances = [np.linalg.norm(joints[i] - wrist_pos) for i in [4, 8, 12, 16, 20]]  # Fingertips
+    if all(0.05 <= d <= 0.15 for d in finger_distances):  # 5cm to 15cm from wrist
+        score += 1.0
+        print(f"    ✓ Realistic finger lengths: {finger_distances}")
+    else:
+        print(f"    ⚠ Unrealistic finger lengths: {finger_distances}")
+    
+    # Check 5: Bone length consistency
+    bone_lengths = calculate_bone_lengths_simple(joints)
+    if bone_lengths and all(0.01 <= bl <= 0.08 for bl in bone_lengths):  # 1cm to 8cm bones
+        score += 1.0
+        print(f"    ✓ Realistic bone lengths")
+    else:
+        print(f"    ⚠ Unrealistic bone lengths")
+    
+    # Check 6: Hand chirality (right hand should have thumb on correct side)
+    thumb_direction = joints[4] - joints[0]  # Thumb tip - wrist
+    if thumb_direction[0] > 0:  # Assuming right hand, thumb should be positive X
+        score += 1.0
+        print(f"    ✓ Correct hand chirality")
+    else:
+        print(f"    ⚠ Incorrect hand chirality")
+    
+    final_score = score / max_score
+    print(f"    Total score: {score}/{max_score} = {final_score:.2f}")
+    
+    return final_score
+
+def calculate_bone_lengths_simple(joints):
+    """Calculate simple bone lengths for validation."""
+    
+    connections = [
+        (0, 1), (1, 2), (2, 3), (3, 4),  # Thumb
+        (0, 5), (5, 6), (6, 7), (7, 8),  # Index
+        (0, 9), (9, 10), (10, 11), (11, 12),  # Middle
+        (0, 13), (13, 14), (14, 15), (15, 16),  # Ring
+        (0, 17), (17, 18), (18, 19), (19, 20)   # Little
+    ]
+    
+    bone_lengths = []
+    for parent, child in connections:
+        if parent < len(joints) and child < len(joints):
+            length = np.linalg.norm(joints[child] - joints[parent])
+            bone_lengths.append(length)
+    
+    return bone_lengths
+
+def convert_mano_params_robust(hand_position, hand_rotations, hand='right', structure=None):
+    """Convert MANO parameters with robust structure detection."""
+    
+    if structure is None:
+        structure = determine_mano_parameter_structure(hand_rotations)
+    
+    print(f"Converting MANO parameters using {structure} structure")
+    
+    try:
+        if structure == "standard_mano":
+            return convert_with_standard_mano(hand_position, hand_rotations[:3], hand_rotations[3:], hand)
+        elif structure == "all_pose":
+            return convert_with_all_pose(hand_position, hand_rotations, hand)
+        elif structure == "pianomotion_style":
+            return convert_with_pianomotion_style(hand_position, hand_rotations, hand)
+        else:
+            # Use the best available method
+            return convert_with_adaptive_structure(hand_position, hand_rotations, hand)
+            
+    except Exception as e:
+        print(f"MANO conversion failed with {structure}: {e}")
+        print("Falling back to approximation method")
+        return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
+
+def convert_with_standard_mano(hand_position, global_orient, hand_pose, hand='right'):
+    """Convert using standard MANO structure (3 global + 45 pose)."""
+    
+    # Implementation for standard MANO structure
+    # This uses the existing logic in mano_utils.py
+    return convert_mano_params_to_joints_legacy(hand_position, 
+                                       np.concatenate([global_orient, hand_pose]), 
+                                       hand)
+
+def convert_with_all_pose(hand_position, hand_rotations, hand='right'):
+    """Convert using all-pose structure (48 pose parameters)."""
+    
+    # When all parameters are pose parameters, there's no global orientation
+    # This means the hand orientation is encoded in the pose parameters
+    
+    # Use a modified version of the conversion
+    global_orient = np.zeros(3)  # No global orientation
+    hand_pose = hand_rotations    # All 48 are pose parameters
+    
+    # Use different joint mapping for 48 pose parameters
+    return convert_with_extended_pose_params(hand_position, hand_pose, hand)
+
+def convert_with_pianomotion_style(hand_position, hand_rotations, hand='right'):
+    """Convert using PianoMotion10M style structure."""
+    
+    # Based on official PianoMotion10M rendering code analysis
+    # The official code expects: position(3) + global_orient(3) + hand_pose(45) = 51
+    # But our model outputs 48 rotation parameters, so we need to adapt
+    
+    # For 48 parameters, we'll use: global_orient(3) + hand_pose(45)
+    global_orient = hand_rotations[:3]
+    hand_pose = hand_rotations[3:48]
+    
+    # Use the standard MANO conversion but with proper parameter interpretation
+    return convert_with_standard_mano(hand_position, global_orient, hand_pose, hand)
+
+def convert_with_extended_pose_params(hand_position, pose_params, hand='right'):
+    """Convert using extended pose parameters (48 instead of 45)."""
+    
+    # This suggests 16 joints × 3 parameters = 48
+    # Instead of the standard 15 joints × 3 parameters = 45
+    
+    if len(pose_params) != 48:
+        raise ValueError(f"Expected 48 pose parameters, got {len(pose_params)}")
+    
+    # Reshape to 16 joints × 3 parameters
+    joint_rotations = pose_params.reshape(16, 3)
+    
+    # Create extended joint structure with 16+1=17 joints (including wrist)
+    # Map to the standard 21-joint MANO structure
+    
+    joints = create_joints_from_extended_params(hand_position, joint_rotations, hand)
+    
+    return joints
+
+def create_joints_from_extended_params(hand_position, joint_rotations, hand='right'):
+    """Create joint positions from 16 joint rotation parameters."""
+    
+    # This is a more sophisticated approach that uses the rotation parameters
+    # to compute joint positions through forward kinematics
+    
+    # For now, use a simplified approach
+    # In practice, this would need proper MANO forward kinematics
+    
+    hand_sign = 1 if hand == 'right' else -1
+    
+    # Base joint structure (similar to existing approach)
+    joints = np.zeros((21, 3))
+    joints[0] = hand_position  # Wrist
+    
+    # Apply rotations to compute finger positions
+    # This is a simplified implementation - full MANO would be more complex
+    
+    finger_base_offsets = [
+        [hand_sign * 0.02, 0.01, 0.02],    # Thumb base
+        [hand_sign * 0.02, 0.08, 0.01],    # Index base
+        [0, 0.09, 0.005],                  # Middle base
+        [hand_sign * -0.02, 0.085, 0],     # Ring base
+        [hand_sign * -0.04, 0.075, -0.005] # Little base
+    ]
+    
+    finger_joint_indices = [
+        [1, 2, 3, 4],      # Thumb
+        [5, 6, 7, 8],      # Index
+        [9, 10, 11, 12],   # Middle
+        [13, 14, 15, 16],  # Ring
+        [17, 18, 19, 20]   # Little
+    ]
+    
+    # For each finger, use the rotation parameters to compute joint positions
+    for finger_idx, (base_offset, joint_indices) in enumerate(zip(finger_base_offsets, finger_joint_indices)):
+        if finger_idx < len(joint_rotations):
+            # Use rotation parameters for this finger
+            finger_rots = joint_rotations[finger_idx * 3:(finger_idx + 1) * 3]
+            
+            # Compute finger joints with rotation influence
+            for i, joint_idx in enumerate(joint_indices):
+                if i == 0:
+                    # Base joint
+                    joints[joint_idx] = hand_position + base_offset
+                else:
+                    # Subsequent joints influenced by rotations
+                    prev_joint = joints[joint_indices[i-1]]
+                    
+                    # Simple rotation influence (simplified)
+                    if i-1 < len(finger_rots):
+                        rotation_factor = finger_rots[i-1] * 0.05
+                        offset = np.array([0, 0.025, 0]) * (1 + rotation_factor)
+                        joints[joint_idx] = prev_joint + offset
+    
+    return joints
+
+def convert_with_adaptive_structure(hand_position, hand_rotations, hand='right'):
+    """Convert using adaptive structure detection."""
+    
+    # Try to determine the best structure automatically
+    if len(hand_rotations) == 48:
+        # Most likely PianoMotion10M style: 3 global + 45 pose
+        return convert_with_pianomotion_style(hand_position, hand_rotations, hand)
+    else:
+        # Fallback to approximation
+        return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
+
+def convert_mano_params_to_joints(hand_position, hand_rotations, hand='right'):
+    """
+    Convert MANO parameters (position + rotations) to joint positions.
+    
+    This is the main entry point that uses the robust parameter structure detection.
+    
+    Args:
+        hand_position: (3,) array - 3D position of hand
+        hand_rotations: (48,) array - MANO rotation parameters
+        hand: 'right' or 'left'
+    
+    Returns:
+        joint_positions: (21, 3) array - 3D positions of MANO joints
+    """
+    
+    # Use the robust conversion system
+    return convert_mano_params_robust(hand_position, hand_rotations, hand)
+
+def convert_mano_params_to_joints_legacy(hand_position, hand_rotations, hand='right'):
+    """
+    Legacy conversion function - the original implementation.
+    This is kept for backward compatibility and testing.
+    """
+    
+    # PianoMotion10M outputs 48 rotation parameters, not 21 joint positions
+    # The MANO model is designed for mesh rendering, not joint extraction
+    # For visualization purposes, we'll create a reasonable joint mapping
+    
+    if len(hand_rotations) != 48:
+        print(f"✗ Expected 48 rotation parameters, got {len(hand_rotations)}")
+        print("  Falling back to simplified joint approximation")
+        return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
+    
+    print(f"Converting 48 MANO parameters to 21 joint positions for {hand} hand")
+    
+    # Parse MANO parameters according to PianoMotion10M format:
+    # - First 3: Global orientation (root rotation)
+    # - Next 45: Hand pose (15 joints × 3 rotations each)
+    global_orient = hand_rotations[:3]  # First 3 parameters
+    hand_pose = hand_rotations[3:48]    # Next 45 parameters (15 joints × 3)
+    
+    # Create a more sophisticated joint mapping based on the rotation parameters
+    # This is an approximation that uses the rotation parameters to influence joint positions
+    
+    # Basic hand structure (relative to wrist)
+    if hand == 'right':
+        hand_sign = 1
+    else:
+        hand_sign = -1  # Mirror for left hand
+    
+    # Approximate joint offsets (in hand coordinate system)
+    joint_offsets = np.array([
+        [0, 0, 0],                           # 0: Wrist
+        [hand_sign * 0.02, 0.01, 0.02],     # 1: Thumb CMC
+        [hand_sign * 0.03, 0.02, 0.04],     # 2: Thumb MCP
+        [hand_sign * 0.035, 0.03, 0.055],   # 3: Thumb IP
+        [hand_sign * 0.04, 0.035, 0.07],    # 4: Thumb Tip
+        [hand_sign * 0.02, 0.08, 0.01],     # 5: Index MCP
+        [hand_sign * 0.02, 0.11, 0.015],    # 6: Index PIP
+        [hand_sign * 0.02, 0.135, 0.02],    # 7: Index DIP
+        [hand_sign * 0.02, 0.155, 0.025],   # 8: Index Tip
+        [0, 0.09, 0.005],                   # 9: Middle MCP
+        [0, 0.125, 0.01],                   # 10: Middle PIP
+        [0, 0.15, 0.015],                   # 11: Middle DIP
+        [0, 0.17, 0.02],                    # 12: Middle Tip
+        [hand_sign * -0.02, 0.085, 0],      # 13: Ring MCP
+        [hand_sign * -0.02, 0.115, 0.005],  # 14: Ring PIP
+        [hand_sign * -0.02, 0.14, 0.01],    # 15: Ring DIP
+        [hand_sign * -0.02, 0.16, 0.015],   # 16: Ring Tip
+        [hand_sign * -0.04, 0.075, -0.005], # 17: Little MCP
+        [hand_sign * -0.04, 0.1, 0],        # 18: Little PIP
+        [hand_sign * -0.04, 0.12, 0.005],   # 19: Little DIP
+        [hand_sign * -0.04, 0.135, 0.01]    # 20: Little Tip
+    ])
+    
+    # Apply global orientation influence
+    if len(global_orient) >= 3:
+        # Use global orientation to rotate the entire hand
+        global_rot_x = global_orient[0] * 0.1  # Scale down
+        global_rot_y = global_orient[1] * 0.1
+        global_rot_z = global_orient[2] * 0.1
+        
+        # Apply rotations around each axis
+        for i in range(len(joint_offsets)):
+            x, y, z = joint_offsets[i]
+            
+            # Rotate around X-axis
+            y_new = y * np.cos(global_rot_x) - z * np.sin(global_rot_x)
+            z_new = y * np.sin(global_rot_x) + z * np.cos(global_rot_x)
+            y, z = y_new, z_new
+            
+            # Rotate around Y-axis
+            x_new = x * np.cos(global_rot_y) + z * np.sin(global_rot_y)
+            z_new = -x * np.sin(global_rot_y) + z * np.cos(global_rot_y)
+            x, z = x_new, z_new
+            
+            # Rotate around Z-axis
+            x_new = x * np.cos(global_rot_z) - y * np.sin(global_rot_z)
+            y_new = x * np.sin(global_rot_z) + y * np.cos(global_rot_z)
+            x, y = x_new, y_new
+            
+            joint_offsets[i] = [x, y, z]
+    
+    # Apply finger-specific rotations from hand pose parameters
+    if len(hand_pose) >= 45:
+        # Map hand pose parameters to finger rotations
+        # Each finger has 3 joints with 3 rotation parameters each = 9 parameters per finger
+        finger_params = hand_pose.reshape(5, 9)  # 5 fingers, 9 params each
+        
+        for finger_idx in range(5):
+            if finger_idx < len(finger_params):
+                finger_rot = finger_params[finger_idx]
+                
+                # Apply finger-specific rotations
+                # This is a simplified mapping - in reality, MANO has more complex joint relationships
+                if finger_idx == 0:  # Thumb
+                    joint_indices = [1, 2, 3, 4]
+                elif finger_idx == 1:  # Index
+                    joint_indices = [5, 6, 7, 8]
+                elif finger_idx == 2:  # Middle
+                    joint_indices = [9, 10, 11, 12]
+                elif finger_idx == 3:  # Ring
+                    joint_indices = [13, 14, 15, 16]
+                else:  # Little
+                    joint_indices = [17, 18, 19, 20]
+                
+                # Apply rotation to finger joints
+                for i, joint_idx in enumerate(joint_indices):
+                    if joint_idx < len(joint_offsets) and i < 3:
+                        rot_factor = finger_rot[i] * 0.05  # Scale down
+                        x, y, z = joint_offsets[joint_idx]
+                        
+                        # Simple rotation around Y-axis (finger curl)
+                        cos_r = np.cos(rot_factor)
+                        sin_r = np.sin(rot_factor)
+                        joint_offsets[joint_idx, 0] = x * cos_r - z * sin_r
+                        joint_offsets[joint_idx, 2] = x * sin_r + z * cos_r
+    
+    # Translate to world position
+    joints = joint_offsets + hand_position
+    
+    print(f"✓ Created MANO-based joints for {hand} hand ({len(joints)} joints)")
+    print(f"  - Used {len(global_orient)} global orientation parameters")
+    print(f"  - Used {len(hand_pose)} hand pose parameters")
+    
+    return joints 
+
+def convert_with_custom_structure(hand_position, global_orient, hand_pose, hand='right'):
+    """Convert using custom structure - fallback for unknown parameter structures."""
+    
+    print(f"  Using custom structure conversion (fallback)")
+    print(f"    Global orient: {len(global_orient)} parameters")
+    print(f"    Hand pose: {len(hand_pose)} parameters")
+    
+    # Combine all parameters and use approximation
+    all_params = np.concatenate([global_orient, hand_pose])
+    return approximate_joints_from_parameters(hand_position, all_params, hand) 
