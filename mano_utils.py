@@ -13,6 +13,39 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import os
+import torch # Added for MANO forward kinematics
+
+# Import function from midi_to_frames.py
+try:
+    from midi_to_frames import process_model_output_with_proper_coordinates
+except ImportError:
+    # Fallback if the function is not available
+    def process_model_output_with_proper_coordinates(pose_hat, guide, device='cpu'):
+        """
+        Fallback implementation if the main function is not available.
+        """
+        print("Warning: Using fallback process_model_output_with_proper_coordinates")
+        
+        # Simple processing without coordinate transformations
+        prediction = pose_hat[0].detach().cpu().numpy()
+        scaled_guide = guide[0].detach().cpu().numpy()
+        
+        # Split data
+        right_hand_angles = prediction[:, :48]
+        left_hand_angles = prediction[:, 48:]
+        right_hand_pos = scaled_guide[:, :3]
+        left_hand_pos = scaled_guide[:, 3:]
+        
+        return {
+            'right_hand_angles': right_hand_angles,
+            'left_hand_angles': left_hand_angles,
+            'right_hand_position': right_hand_pos,
+            'left_hand_position': left_hand_pos,
+            'num_frames': prediction.shape[0],
+            'coordinate_info': {},
+            'spatial_info': {},
+            'keyboard_info': {}
+        }
 
 def find_mano_model_path():
     """
@@ -495,3 +528,517 @@ def visualize_both_hands_3d(left_hand_joints, right_hand_joints, frame_idx=0, to
                 fontsize=16, fontweight='bold', y=0.95)
     plt.tight_layout()
     plt.show() 
+
+def visualize_with_correct_coordinates(processed_data, frame_idx=0):
+    """
+    Visualize hand motion with correct coordinate system handling.
+    """
+    
+    # Get coordinate system information
+    coord_info = processed_data.get('coordinate_info', {})
+    
+    # Extract data for visualization
+    right_pos = processed_data['right_hand_position'][frame_idx]
+    left_pos = processed_data['left_hand_position'][frame_idx]
+    right_angles = processed_data['right_hand_angles'][frame_idx]
+    left_angles = processed_data['left_hand_angles'][frame_idx]
+    
+    print(f"Visualization Frame {frame_idx}:")
+    print(f"  Right hand position: [{right_pos[0]:.3f}, {right_pos[1]:.3f}, {right_pos[2]:.3f}]")
+    print(f"  Left hand position: [{left_pos[0]:.3f}, {left_pos[1]:.3f}, {left_pos[2]:.3f}]")
+    print(f"  Right hand angles range: [{np.min(right_angles):.3f}, {np.max(right_angles):.3f}] rad")
+    print(f"  Left hand angles range: [{np.min(left_angles):.3f}, {np.max(left_angles):.3f}] rad")
+    
+    # Create 3D visualization with proper coordinate system
+    fig = plt.figure(figsize=(15, 5))
+    
+    # Plot 1: Hand positions in world space
+    ax1 = fig.add_subplot(131, projection='3d')
+    ax1.scatter(right_pos[0], right_pos[1], right_pos[2], 
+               c='red', s=100, label='Right Hand', alpha=0.8)
+    ax1.scatter(left_pos[0], left_pos[1], left_pos[2], 
+               c='blue', s=100, label='Left Hand', alpha=0.8)
+    
+    ax1.set_xlabel('X (Lateral)')
+    ax1.set_ylabel('Y (Vertical)')
+    ax1.set_zlabel('Z (Depth)')
+    ax1.set_title('Hand Positions\n(Scaled World Coordinates)')
+    ax1.legend()
+    
+    # Plot 2: Angle distributions
+    ax2 = fig.add_subplot(132)
+    ax2.hist(right_angles, bins=20, alpha=0.7, label='Right Hand', color='red')
+    ax2.hist(left_angles, bins=20, alpha=0.7, label='Left Hand', color='blue')
+    ax2.set_xlabel('Angle (radians)')
+    ax2.set_ylabel('Count')
+    ax2.set_title('Hand Joint Angle Distribution')
+    ax2.legend()
+    
+    # Plot 3: Coordinate system reference
+    ax3 = fig.add_subplot(133, projection='3d')
+    
+    # Draw coordinate system axes
+    origin = np.array([0, 0, 0])
+    axes_length = 10
+    
+    # X-axis (red)
+    ax3.quiver(origin[0], origin[1], origin[2], axes_length, 0, 0, 
+              color='red', arrow_length_ratio=0.1, label='X (Lateral)')
+    # Y-axis (green)
+    ax3.quiver(origin[0], origin[1], origin[2], 0, axes_length, 0, 
+              color='green', arrow_length_ratio=0.1, label='Y (Vertical)')
+    # Z-axis (blue)
+    ax3.quiver(origin[0], origin[1], origin[2], 0, 0, axes_length, 
+              color='blue', arrow_length_ratio=0.1, label='Z (Depth)')
+    
+    ax3.set_xlabel('X')
+    ax3.set_ylabel('Y')
+    ax3.set_zlabel('Z')
+    ax3.set_title('Coordinate System\nReference')
+    ax3.legend()
+    
+    plt.tight_layout()
+    plt.suptitle(f'PianoMotion10M Coordinate System Analysis - Frame {frame_idx}', y=1.02)
+    plt.show()
+
+def visualize_spatial_analysis(processed_data):
+    """
+    Visualize spatial analysis of hand movements with piano keyboard context.
+    """
+    
+    spatial_info = processed_data.get('spatial_info', {})
+    keyboard_info = processed_data.get('keyboard_info', {})
+    
+    if not spatial_info or not keyboard_info:
+        print("Spatial analysis data not available")
+        return
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    
+    # Plot 1: Hand movement ranges
+    right_range = spatial_info.get('right_range', [0, 0, 0])
+    left_range = spatial_info.get('left_range', [0, 0, 0])
+    
+    x_labels = ['X (Lateral)', 'Y (Vertical)', 'Z (Depth)']
+    x_pos = np.arange(len(x_labels))
+    width = 0.35
+    
+    axes[0, 0].bar(x_pos - width/2, right_range, width, label='Right Hand', color='red', alpha=0.7)
+    axes[0, 0].bar(x_pos + width/2, left_range, width, label='Left Hand', color='blue', alpha=0.7)
+    axes[0, 0].set_xlabel('Coordinate Axis')
+    axes[0, 0].set_ylabel('Movement Range (units)')
+    axes[0, 0].set_title('Hand Movement Ranges')
+    axes[0, 0].set_xticks(x_pos)
+    axes[0, 0].set_xticklabels(x_labels)
+    axes[0, 0].legend()
+    
+    # Plot 2: Physical scale estimation
+    right_physical = spatial_info.get('right_physical', [0, 0, 0])
+    left_physical = spatial_info.get('left_physical', [0, 0, 0])
+    
+    axes[0, 1].bar(x_pos - width/2, right_physical, width, label='Right Hand', color='red', alpha=0.7)
+    axes[0, 1].bar(x_pos + width/2, left_physical, width, label='Left Hand', color='blue', alpha=0.7)
+    axes[0, 1].set_xlabel('Coordinate Axis')
+    axes[0, 1].set_ylabel('Estimated Physical Range (meters)')
+    axes[0, 1].set_title('Estimated Physical Scale')
+    axes[0, 1].set_xticks(x_pos)
+    axes[0, 1].set_xticklabels(x_labels)
+    axes[0, 1].legend()
+    
+    # Plot 3: Piano keyboard context
+    keyboard_width = keyboard_info.get('total_width', 1.2)
+    octave_width = keyboard_info.get('approximate_octave_width', 0.161)
+    white_key_width = keyboard_info.get('white_key_width', 0.023)
+    
+    # Create a simple piano keyboard visualization
+    keys = []
+    colors = []
+    for i in range(52):  # White keys
+        keys.append(i * white_key_width)
+        colors.append('white')
+    
+    axes[1, 0].barh(keys, [white_key_width] * 52, color=colors, edgecolor='black', linewidth=0.5)
+    axes[1, 0].set_xlabel('Position (meters)')
+    axes[1, 0].set_ylabel('Key Index')
+    axes[1, 0].set_title('Piano Keyboard Layout (White Keys)')
+    axes[1, 0].set_xlim(0, keyboard_width)
+    
+    # Plot 4: Scale factors visualization
+    scale_factors = spatial_info.get('scale_factors', [1.5, 1.5, 25])
+    axes[1, 1].bar(x_labels, scale_factors, color=['red', 'green', 'blue'], alpha=0.7)
+    axes[1, 1].set_ylabel('Scale Factor')
+    axes[1, 1].set_title('Coordinate System Scale Factors')
+    axes[1, 1].tick_params(axis='x', rotation=45)
+    
+    plt.tight_layout()
+    plt.suptitle('PianoMotion10M Spatial Analysis', y=0.98)
+    plt.show() 
+
+def explain_pianomotion_mano_integration():
+    """
+    Explain how PianoMotion10M integrates with MANO model.
+    """
+    
+    integration_info = {
+        "model_architecture": {
+            "position_predictor": "Outputs 6D (3D position for each hand)",
+            "gesture_generator": "Outputs 96D (48 rotation parameters per hand)",
+            "total_output": "6D position + 96D rotation = 102D per frame"
+        },
+        "mano_usage": {
+            "parameterization": "MANO-style rotation parameters",
+            "joint_count": "21 joints in full MANO, but parameterized differently",
+            "output_format": "48 parameters per hand (not 48/3 = 16 joints)",
+            "coordinate_system": "MANO coordinate frame with piano-specific adaptations"
+        },
+        "data_flow": {
+            "step_1": "Audio → Position Predictor → 3D hand positions",
+            "step_2": "Audio + Positions → Diffusion Model → Hand rotation parameters",
+            "step_3": "Positions + Rotations → MANO Forward Kinematics → Joint positions",
+            "step_4": "Joint positions → Visualization/Animation"
+        },
+        "official_rendering": {
+            "method": "Uses render_result() from datasets/show.py",
+            "input_format": "Concatenated [position, rotation] arrays",
+            "right_hand": "np.concatenate([guide[:, :3], prediction[:, :48]], 1)",
+            "left_hand": "np.concatenate([guide[:, 3:], prediction[:, 48:]], 1)"
+        }
+    }
+    
+    print("PianoMotion10M MANO Integration:")
+    for category, details in integration_info.items():
+        print(f"\n  {category.replace('_', ' ').title()}:")
+        for key, value in details.items():
+            print(f"    - {key.replace('_', ' ').title()}: {value}")
+    
+    return integration_info
+
+def convert_mano_params_to_joints(hand_position, hand_rotations, hand='right'):
+    """
+    Convert MANO parameters (position + rotations) to joint positions.
+    
+    Args:
+        hand_position: (3,) array - 3D position of hand
+        hand_rotations: (48,) array - MANO rotation parameters
+        hand: 'right' or 'left'
+    
+    Returns:
+        joint_positions: (21, 3) array - 3D positions of MANO joints
+    """
+    
+    try:
+        # Try to use the actual MANO model if available
+        import sys
+        import os
+        sys.path.append('PianoMotion10M')
+        from models.mano import build_mano
+        
+        # Load MANO model
+        mano_layer = build_mano()
+        mano_model = mano_layer[hand]
+        
+        # Convert rotation parameters to MANO format
+        # Note: This is a simplified conversion - actual implementation depends on
+        # how PianoMotion10M parameterizes the rotations
+        
+        # Reshape rotation parameters (48,) → appropriate MANO format
+        # This is dataset-specific and may require analysis of training code
+        if len(hand_rotations) == 48:
+            # Assume the 48 parameters map to MANO pose parameters
+            # This mapping needs to be determined from the training code
+            mano_pose = hand_rotations.reshape(-1)  # Keep as is for now
+        else:
+            raise ValueError(f"Unexpected rotation parameter count: {len(hand_rotations)}")
+        
+        # Set hand shape to mean (or zeros for simplicity)
+        batch_size = 1
+        hand_shape = torch.zeros(batch_size, 10)  # MANO shape parameters
+        
+        # Convert position to global translation
+        global_orient = torch.zeros(batch_size, 3)  # Root rotation
+        transl = torch.tensor(hand_position).unsqueeze(0).float()  # Translation
+        
+        # Convert pose parameters to tensor
+        hand_pose = torch.tensor(mano_pose).unsqueeze(0).float()
+        
+        # Forward pass through MANO
+        output = mano_model(
+            global_orient=global_orient,
+            hand_pose=hand_pose,
+            betas=hand_shape,
+            transl=transl
+        )
+        
+        # Extract joint positions
+        joints = output.joints[0].detach().numpy()  # (21, 3)
+        
+        print(f"✓ MANO forward kinematics successful for {hand} hand")
+        print(f"  - Input rotations: {hand_rotations.shape}")
+        print(f"  - Input position: {hand_position}")
+        print(f"  - Output joints: {joints.shape}")
+        
+        return joints
+        
+    except Exception as e:
+        print(f"✗ MANO forward kinematics failed: {e}")
+        print("Falling back to simplified joint approximation")
+        
+        # Fallback: Create approximate joint positions
+        return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
+
+def approximate_joints_from_parameters(hand_position, hand_rotations, hand='right'):
+    """
+    Create approximate joint positions when full MANO is not available.
+    """
+    
+    # Create a simplified hand model with 21 joints
+    # This is an approximation - not as accurate as full MANO
+    
+    # Basic hand structure (relative to wrist)
+    if hand == 'right':
+        hand_sign = 1
+    else:
+        hand_sign = -1  # Mirror for left hand
+    
+    # Approximate joint offsets (in hand coordinate system)
+    joint_offsets = np.array([
+        [0, 0, 0],                           # 0: Wrist
+        [hand_sign * 0.02, 0.01, 0.02],     # 1: Thumb CMC
+        [hand_sign * 0.03, 0.02, 0.04],     # 2: Thumb MCP
+        [hand_sign * 0.035, 0.03, 0.055],   # 3: Thumb IP
+        [hand_sign * 0.04, 0.035, 0.07],    # 4: Thumb Tip
+        [hand_sign * 0.02, 0.08, 0.01],     # 5: Index MCP
+        [hand_sign * 0.02, 0.11, 0.015],    # 6: Index PIP
+        [hand_sign * 0.02, 0.135, 0.02],    # 7: Index DIP
+        [hand_sign * 0.02, 0.155, 0.025],   # 8: Index Tip
+        [0, 0.09, 0.005],                   # 9: Middle MCP
+        [0, 0.125, 0.01],                   # 10: Middle PIP
+        [0, 0.15, 0.015],                   # 11: Middle DIP
+        [0, 0.17, 0.02],                    # 12: Middle Tip
+        [hand_sign * -0.02, 0.085, 0],      # 13: Ring MCP
+        [hand_sign * -0.02, 0.115, 0.005],  # 14: Ring PIP
+        [hand_sign * -0.02, 0.14, 0.01],    # 15: Ring DIP
+        [hand_sign * -0.02, 0.16, 0.015],   # 16: Ring Tip
+        [hand_sign * -0.04, 0.075, -0.005], # 17: Little MCP
+        [hand_sign * -0.04, 0.1, 0],        # 18: Little PIP
+        [hand_sign * -0.04, 0.12, 0.005],   # 19: Little DIP
+        [hand_sign * -0.04, 0.135, 0.01]    # 20: Little Tip
+    ])
+    
+    # Apply some rotation based on rotation parameters
+    # This is a very simplified approach
+    if len(hand_rotations) >= 6:  # At least some rotation info
+        # Use first few rotation parameters for basic hand orientation
+        rotation_factor = np.mean(hand_rotations[:6]) * 0.1  # Scale down
+        
+        # Simple rotation around Y-axis (finger curl)
+        cos_r = np.cos(rotation_factor)
+        sin_r = np.sin(rotation_factor)
+        
+        for i in range(len(joint_offsets)):
+            x, y, z = joint_offsets[i]
+            joint_offsets[i, 0] = x * cos_r - z * sin_r
+            joint_offsets[i, 2] = x * sin_r + z * cos_r
+    
+    # Translate to world position
+    joints = joint_offsets + hand_position
+    
+    print(f"✓ Created approximate joints for {hand} hand ({len(joints)} joints)")
+    
+    return joints
+
+def visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=True):
+    """
+    Visualize hands using proper MANO model integration.
+    """
+    
+    # Extract data for the specified frame
+    right_pos = processed_data['right_hand_position'][frame_idx]
+    left_pos = processed_data['left_hand_position'][frame_idx]
+    right_angles = processed_data['right_hand_angles'][frame_idx]
+    left_angles = processed_data['left_hand_angles'][frame_idx]
+    
+    print(f"MANO-based visualization for frame {frame_idx}")
+    
+    # Convert MANO parameters to joint positions
+    try:
+        if use_full_mano:
+            right_joints = convert_mano_params_to_joints(right_pos, right_angles, 'right')
+            left_joints = convert_mano_params_to_joints(left_pos, left_angles, 'left')
+        else:
+            right_joints = approximate_joints_from_parameters(right_pos, right_angles, 'right')
+            left_joints = approximate_joints_from_parameters(left_pos, left_angles, 'left')
+    except Exception as e:
+        print(f"Joint conversion failed: {e}")
+        return
+    
+    # Create visualization
+    fig = plt.figure(figsize=(15, 5))
+    
+    # MANO joint connections (21-joint model)
+    mano_connections = [
+        # Wrist to finger bases
+        (0, 1), (0, 5), (0, 9), (0, 13), (0, 17),
+        # Thumb
+        (1, 2), (2, 3), (3, 4),
+        # Index
+        (5, 6), (6, 7), (7, 8),
+        # Middle  
+        (9, 10), (10, 11), (11, 12),
+        # Ring
+        (13, 14), (14, 15), (15, 16),
+        # Little
+        (17, 18), (18, 19), (19, 20)
+    ]
+    
+    # Plot right hand
+    ax1 = fig.add_subplot(131, projection='3d')
+    plot_hand_with_mano_structure(ax1, right_joints, mano_connections, 
+                                 'Right Hand', 'red')
+    
+    # Plot left hand
+    ax2 = fig.add_subplot(132, projection='3d')
+    plot_hand_with_mano_structure(ax2, left_joints, mano_connections, 
+                                 'Left Hand', 'blue')
+    
+    # Plot both hands together
+    ax3 = fig.add_subplot(133, projection='3d')
+    plot_hand_with_mano_structure(ax3, right_joints, mano_connections, 
+                                 'Right', 'red', alpha=0.7)
+    plot_hand_with_mano_structure(ax3, left_joints, mano_connections, 
+                                 'Left', 'blue', alpha=0.7, add_to_existing=True)
+    ax3.set_title('Both Hands')
+    
+    plt.suptitle(f'MANO-based Hand Visualization - Frame {frame_idx}')
+    plt.tight_layout()
+    plt.show()
+
+def plot_hand_with_mano_structure(ax, joints, connections, title, color, alpha=1.0, add_to_existing=False):
+    """
+    Plot a hand with proper MANO joint structure.
+    """
+    
+    if not add_to_existing:
+        ax.clear()
+    
+    # Plot joints
+    ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], 
+              c=color, s=50, alpha=alpha, label=title)
+    
+    # Plot connections
+    for parent, child in connections:
+        if parent < len(joints) and child < len(joints):
+            ax.plot([joints[parent, 0], joints[child, 0]],
+                   [joints[parent, 1], joints[child, 1]],
+                   [joints[parent, 2], joints[child, 2]], 
+                   color=color, linewidth=2, alpha=alpha)
+    
+    # Highlight key joints
+    key_joints = [0, 4, 8, 12, 16, 20]  # Wrist and fingertips
+    for joint_idx in key_joints:
+        if joint_idx < len(joints):
+            ax.scatter(joints[joint_idx, 0], joints[joint_idx, 1], joints[joint_idx, 2], 
+                      c='black', s=80, alpha=alpha*0.8, marker='o', edgecolors=color)
+    
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y') 
+    ax.set_zlabel('Z')
+    ax.set_title(title)
+    ax.legend()
+    
+    # Set equal aspect ratio
+    max_range = 0.1  # Adjust based on hand size
+    ax.set_xlim([joints[0, 0] - max_range, joints[0, 0] + max_range])
+    ax.set_ylim([joints[0, 1] - max_range, joints[0, 1] + max_range])
+    ax.set_zlim([joints[0, 2] - max_range, joints[0, 2] + max_range])
+
+def prepare_data_for_official_rendering(processed_data):
+    """
+    Prepare data in the format expected by official PianoMotion10M rendering.
+    """
+    
+    # Get all frames
+    num_frames = processed_data['num_frames']
+    
+    # Prepare data in official format
+    right_data = np.concatenate([
+        processed_data['right_hand_position'],  # (frames, 3)
+        processed_data['right_hand_angles']     # (frames, 48)
+    ], axis=1)  # Result: (frames, 51)
+    
+    left_data = np.concatenate([
+        processed_data['left_hand_position'],   # (frames, 3)
+        processed_data['left_hand_angles']      # (frames, 48)
+    ], axis=1)  # Result: (frames, 51)
+    
+    print(f"Prepared data for official rendering:")
+    print(f"  - Right hand data shape: {right_data.shape}")
+    print(f"  - Left hand data shape: {left_data.shape}")
+    print(f"  - Frame count: {num_frames}")
+    print(f"  - Data format: [position(3), rotation_params(48)] per hand")
+    
+    return right_data, left_data
+
+def use_official_rendering_if_available(right_data, left_data, audio_array):
+    """
+    Use the official PianoMotion10M rendering if available.
+    """
+    
+    try:
+        # Import official rendering function
+        import sys
+        import os
+        sys.path.append('PianoMotion10M')
+        from datasets.show import render_result
+        
+        # Create output directory
+        output_dir = "rendered_output"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Use official rendering
+        render_result(
+            output_dir,
+            audio_array,
+            right_data,
+            left_data,
+            save_video=False  # Set to True if you want video output
+        )
+        
+        print(f"✓ Used official PianoMotion10M rendering")
+        print(f"✓ Output saved to: {output_dir}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"✗ Official rendering failed: {e}")
+        print("Falling back to custom visualization")
+        return False
+
+def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'):
+    """
+    Complete pipeline with proper MANO integration.
+    """
+    
+    # Explain the integration
+    integration_info = explain_pianomotion_mano_integration()
+    
+    # Process with proper coordinate system
+    processed_data = process_model_output_with_proper_coordinates(pose_hat, guide, device)
+    
+    # Try official rendering first
+    right_data, left_data = prepare_data_for_official_rendering(processed_data)
+    
+    if use_official_rendering_if_available(right_data, left_data, audio_wave):
+        print("✓ Used official PianoMotion10M rendering pipeline")
+    else:
+        print("Using custom MANO-based visualization")
+        
+        # Use custom MANO visualization
+        try:
+            visualize_mano_hands(processed_data, frame_idx=-1, use_full_mano=True)
+        except Exception as e:
+            print(f"Full MANO visualization failed: {e}")
+            print("Using simplified approximation")
+            visualize_mano_hands(processed_data, frame_idx=-1, use_full_mano=False)
+    
+    return processed_data, integration_info 
