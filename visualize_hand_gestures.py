@@ -231,7 +231,7 @@ class StandaloneHandGestureVisualizer:
         return ax
     
     def plot_hand_2d_topdown(self, joints: np.ndarray, connections: List[Tuple[int, int]], 
-                           title: str, color: str, ax=None, show_labels: bool = True):
+                           title: str, color: str, ax=None, show_labels: bool = True, add_to_existing: bool = False):
         """
         Plot a hand in 2D top-down view using joint coordinates and connections.
         
@@ -242,10 +242,14 @@ class StandaloneHandGestureVisualizer:
             color: Color for the hand
             ax: Matplotlib 2D axis
             show_labels: Whether to show joint labels
+            add_to_existing: Whether to add to existing plot
         """
         if ax is None:
             fig = plt.figure(figsize=(8, 6))
             ax = fig.add_subplot(111)
+        
+        if not add_to_existing:
+            ax.clear()
         
         # Plot joints
         ax.scatter(joints[:, 0], joints[:, 1], c=color, s=50, alpha=0.8, 
@@ -286,7 +290,7 @@ class StandaloneHandGestureVisualizer:
     
     def visualize_single_frame(self, frame_idx: int, save_path: Optional[str] = None):
         """
-        Visualize a single frame with both hands.
+        Visualize a single frame with both hands on the same plot.
         
         Args:
             frame_idx (int): Frame index to visualize
@@ -294,35 +298,41 @@ class StandaloneHandGestureVisualizer:
         """
         left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
         
-        fig = plt.figure(figsize=(15, 8))
+        fig = plt.figure(figsize=(12, 10))
         
         if self.view_mode == '3d':
-            # Create subplots for left and right hands (3D)
-            ax1 = fig.add_subplot(1, 2, 1, projection='3d')
-            ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+            # Create single 3D plot for both hands
+            ax = fig.add_subplot(111, projection='3d')
             
-            # Plot hands using standalone function
+            # Plot both hands on the same plot
             self.plot_hand_3d(left_hand, self.mano_joint_connections, 
-                             f"Left Hand - Frame {frame_idx}", 'blue', ax1)
+                             f"Left Hand - Frame {frame_idx}", 'blue', ax, alpha=0.8)
             self.plot_hand_3d(right_hand, self.mano_joint_connections, 
-                             f"Right Hand - Frame {frame_idx}", 'red', ax2)
+                             f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
             
-            # Set consistent view angles
-            for ax in [ax1, ax2]:
-                ax.view_init(elev=20, azim=45)
+            # Set consistent view angle
+            ax.view_init(elev=20, azim=45)
+            
+            # Set consistent axis limits based on both hands
+            all_joints = np.vstack([left_hand, right_hand])
+            center = np.mean(all_joints, axis=0)
+            max_range = np.max(np.ptp(all_joints, axis=0)) * 0.6  # 60% of the range
+            
+            ax.set_xlim([center[0] - max_range, center[0] + max_range])
+            ax.set_ylim([center[1] - max_range, center[1] + max_range])
+            ax.set_zlim([center[2] - max_range, center[2] + max_range])
         
         else:  # 2D top-down view
-            # Create subplots for left and right hands (2D)
-            ax1 = fig.add_subplot(1, 2, 1)
-            ax2 = fig.add_subplot(1, 2, 2)
+            # Create single 2D plot for both hands
+            ax = fig.add_subplot(111)
             
-            # Plot hands in 2D top-down view
+            # Plot both hands in 2D top-down view
             self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, 
-                                    f"Left Hand - Frame {frame_idx}", 'blue', ax1, self.show_labels)
+                                    f"Left Hand - Frame {frame_idx}", 'blue', ax, self.show_labels)
             self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
-                                    f"Right Hand - Frame {frame_idx}", 'red', ax2, self.show_labels)
+                                    f"Right Hand - Frame {frame_idx}", 'red', ax, self.show_labels, add_to_existing=True)
             
-            # Set consistent scaling for both plots
+            # Set consistent scaling for both hands
             if self.auto_scale:
                 all_coords = np.vstack([left_hand, right_hand])
                 x_min, x_max = all_coords[:, 0].min(), all_coords[:, 0].max()
@@ -333,13 +343,12 @@ class StandaloneHandGestureVisualizer:
                 x_range = x_max - x_min
                 y_range = y_max - y_min
                 
-                for ax in [ax1, ax2]:
-                    ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
-                    ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
+                ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
+                ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
         
         view_mode_text = "3D" if self.view_mode == '3d' else "2D Top-Down"
-        plt.suptitle(f'Standalone Hand Gesture Visualization - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
-                    fontsize=16, fontweight='bold')
+        plt.title(f'Hand Gesture Visualization - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
+                 fontsize=16, fontweight='bold')
         plt.tight_layout()
         
         if save_path:
@@ -352,15 +361,13 @@ class StandaloneHandGestureVisualizer:
         """
         Create an interactive visualization with controls for frame navigation and playback.
         """
-        fig = plt.figure(figsize=(16, 10))
+        fig = plt.figure(figsize=(14, 10))
         
-        # Create main visualization area
+        # Create main visualization area (single plot for both hands)
         if self.view_mode == '3d':
-            ax_left = fig.add_subplot(2, 3, 1, projection='3d')
-            ax_right = fig.add_subplot(2, 3, 2, projection='3d')
+            ax = fig.add_subplot(2, 3, (1, 2), projection='3d')
         else:
-            ax_left = fig.add_subplot(2, 3, 1)
-            ax_right = fig.add_subplot(2, 3, 2)
+            ax = fig.add_subplot(2, 3, (1, 2))
         
         ax_stats = fig.add_subplot(2, 3, 3)
         
@@ -374,17 +381,38 @@ class StandaloneHandGestureVisualizer:
         # Initialize visualization
         left_hand, right_hand, left_info, right_info = self.get_frame_data(0)
         
-        # Create initial plots based on view mode
+        # Create initial plot with both hands
         if self.view_mode == '3d':
-            self.plot_hand_3d(left_hand, self.mano_joint_connections, "Left Hand", 'blue', ax_left)
-            self.plot_hand_3d(right_hand, self.mano_joint_connections, "Right Hand", 'red', ax_right)
+            self.plot_hand_3d(left_hand, self.mano_joint_connections, "Left Hand", 'blue', ax, alpha=0.8)
+            self.plot_hand_3d(right_hand, self.mano_joint_connections, "Right Hand", 'red', ax, alpha=0.8, add_to_existing=True)
             
-            # Set consistent view angles
-            for ax in [ax_left, ax_right]:
-                ax.view_init(elev=20, azim=45)
+            # Set consistent view angle
+            ax.view_init(elev=20, azim=45)
+            
+            # Set consistent axis limits based on both hands
+            all_joints = np.vstack([left_hand, right_hand])
+            center = np.mean(all_joints, axis=0)
+            max_range = np.max(np.ptp(all_joints, axis=0)) * 0.6
+            
+            ax.set_xlim([center[0] - max_range, center[0] + max_range])
+            ax.set_ylim([center[1] - max_range, center[1] + max_range])
+            ax.set_zlim([center[2] - max_range, center[2] + max_range])
         else:
-            self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, "Left Hand", 'blue', ax_left, self.show_labels)
-            self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, "Right Hand", 'red', ax_right, self.show_labels)
+            self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, "Left Hand", 'blue', ax, self.show_labels)
+            self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, "Right Hand", 'red', ax, self.show_labels, add_to_existing=True)
+            
+            # Set consistent scaling for both hands
+            if self.auto_scale:
+                all_coords = np.vstack([left_hand, right_hand])
+                x_min, x_max = all_coords[:, 0].min(), all_coords[:, 0].max()
+                y_min, y_max = all_coords[:, 1].min(), all_coords[:, 1].max()
+                
+                padding = 0.1
+                x_range = x_max - x_min
+                y_range = y_max - y_min
+                
+                ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
+                ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
         
         # Create slider
         slider = Slider(ax_slider, 'Frame', 0, self.num_frames-1, valinit=0, valstep=1)
@@ -409,26 +437,33 @@ class StandaloneHandGestureVisualizer:
             left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
             # Clear previous plots
-            ax_left.clear()
-            ax_right.clear()
+            ax.clear()
             
-            # Redraw hands based on view mode
+            # Redraw both hands based on view mode
             if self.view_mode == '3d':
                 self.plot_hand_3d(left_hand, self.mano_joint_connections, 
-                                f"Left Hand - Frame {frame_idx}", 'blue', ax_left)
+                                f"Left Hand - Frame {frame_idx}", 'blue', ax, alpha=0.8)
                 self.plot_hand_3d(right_hand, self.mano_joint_connections, 
-                                f"Right Hand - Frame {frame_idx}", 'red', ax_right)
+                                f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
                 
-                # Set consistent view angles
-                for ax in [ax_left, ax_right]:
-                    ax.view_init(elev=20, azim=45)
+                # Set consistent view angle
+                ax.view_init(elev=20, azim=45)
+                
+                # Set consistent axis limits based on both hands
+                all_joints = np.vstack([left_hand, right_hand])
+                center = np.mean(all_joints, axis=0)
+                max_range = np.max(np.ptp(all_joints, axis=0)) * 0.6
+                
+                ax.set_xlim([center[0] - max_range, center[0] + max_range])
+                ax.set_ylim([center[1] - max_range, center[1] + max_range])
+                ax.set_zlim([center[2] - max_range, center[2] + max_range])
             else:
                 self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, 
-                                        f"Left Hand - Frame {frame_idx}", 'blue', ax_left, self.show_labels)
+                                        f"Left Hand - Frame {frame_idx}", 'blue', ax, self.show_labels)
                 self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
-                                        f"Right Hand - Frame {frame_idx}", 'red', ax_right, self.show_labels)
+                                        f"Right Hand - Frame {frame_idx}", 'red', ax, self.show_labels, add_to_existing=True)
                 
-                # Set consistent scaling for both plots
+                # Set consistent scaling for both hands
                 if self.auto_scale:
                     all_coords = np.vstack([left_hand, right_hand])
                     x_min, x_max = all_coords[:, 0].min(), all_coords[:, 0].max()
@@ -438,9 +473,8 @@ class StandaloneHandGestureVisualizer:
                     x_range = x_max - x_min
                     y_range = y_max - y_min
                     
-                    for ax in [ax_left, ax_right]:
-                        ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
-                        ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
+                    ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
+                    ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
             
             fig.canvas.draw_idle()
         
@@ -521,64 +555,86 @@ Right Hand:
     def create_animation(self, output_path: str = "hand_gesture_animation.gif", 
                         fps: int = 10, dpi: int = 100):
         """
-        Create an animated GIF of the hand gestures.
+        Create an animated GIF of the hand gestures with consistent axis ranges.
         
         Args:
             output_path (str): Path to save the animation
             fps (int): Frames per second for the animation
             dpi (int): DPI for the output animation
         """
-        fig = plt.figure(figsize=(15, 8))
+        fig = plt.figure(figsize=(12, 10))
         
-        # Create subplots based on view mode
+        # Create single plot for both hands
         if self.view_mode == '3d':
-            ax_left = fig.add_subplot(1, 2, 1, projection='3d')
-            ax_right = fig.add_subplot(1, 2, 2, projection='3d')
+            ax = fig.add_subplot(111, projection='3d')
         else:
-            ax_left = fig.add_subplot(1, 2, 1)
-            ax_right = fig.add_subplot(1, 2, 2)
+            ax = fig.add_subplot(111)
+        
+        # Calculate global axis limits across all frames for consistency
+        print("Calculating global axis limits for consistent animation...")
+        all_joints = []
+        for i in range(self.num_frames):
+            left_hand, right_hand, _, _ = self.get_frame_data(i)
+            all_joints.append(left_hand)
+            all_joints.append(right_hand)
+        
+        all_joints = np.vstack(all_joints)
+        
+        if self.view_mode == '3d':
+            # Calculate 3D global limits
+            center = np.mean(all_joints, axis=0)
+            max_range = np.max(np.ptp(all_joints, axis=0)) * 0.6
+            
+            global_xlim = [center[0] - max_range, center[0] + max_range]
+            global_ylim = [center[1] - max_range, center[1] + max_range]
+            global_zlim = [center[2] - max_range, center[2] + max_range]
+        else:
+            # Calculate 2D global limits
+            x_min, x_max = all_joints[:, 0].min(), all_joints[:, 0].max()
+            y_min, y_max = all_joints[:, 1].min(), all_joints[:, 1].max()
+            
+            padding = 0.1
+            x_range = x_max - x_min
+            y_range = y_max - y_min
+            
+            global_xlim = [x_min - padding * x_range, x_max + padding * x_range]
+            global_ylim = [y_min - padding * y_range, y_max + padding * y_range]
         
         def animate(frame_idx):
             """Animation function for each frame."""
             left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
             # Clear previous plots
-            ax_left.clear()
-            ax_right.clear()
+            ax.clear()
             
-            # Visualize hands based on view mode
+            # Visualize both hands based on view mode
             if self.view_mode == '3d':
                 self.plot_hand_3d(left_hand, self.mano_joint_connections, 
-                                f"Left Hand - Frame {frame_idx}", 'blue', ax_left)
+                                f"Left Hand - Frame {frame_idx}", 'blue', ax, alpha=0.8)
                 self.plot_hand_3d(right_hand, self.mano_joint_connections, 
-                                f"Right Hand - Frame {frame_idx}", 'red', ax_right)
+                                f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
                 
-                # Set consistent view angles
-                for ax in [ax_left, ax_right]:
-                    ax.view_init(elev=20, azim=45)
+                # Set consistent view angle
+                ax.view_init(elev=20, azim=45)
+                
+                # Use global axis limits for consistency
+                ax.set_xlim(global_xlim)
+                ax.set_ylim(global_ylim)
+                ax.set_zlim(global_zlim)
             else:
                 self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, 
-                                        f"Left Hand - Frame {frame_idx}", 'blue', ax_left, False)
+                                        f"Left Hand - Frame {frame_idx}", 'blue', ax, False)
                 self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
-                                        f"Right Hand - Frame {frame_idx}", 'red', ax_right, False)
+                                        f"Right Hand - Frame {frame_idx}", 'red', ax, False, add_to_existing=True)
                 
-                # Set consistent scaling for both plots
-                if self.auto_scale:
-                    all_coords = np.vstack([left_hand, right_hand])
-                    x_min, x_max = all_coords[:, 0].min(), all_coords[:, 0].max()
-                    y_min, y_max = all_coords[:, 1].min(), all_coords[:, 1].max()
-                    
-                    padding = 0.1
-                    x_range = x_max - x_min
-                    y_range = y_max - y_min
-                    
-                    for ax in [ax_left, ax_right]:
-                        ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
-                        ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
+                # Use global axis limits for consistency
+                ax.set_xlim(global_xlim)
+                ax.set_ylim(global_ylim)
+                ax.set_aspect('equal')
             
             view_mode_text = "3D" if self.view_mode == '3d' else "2D Top-Down"
-            plt.suptitle(f'Standalone Hand Gesture Animation - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
-                        fontsize=14, fontweight='bold')
+            plt.title(f'Hand Gesture Animation - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
+                     fontsize=14, fontweight='bold')
         
         # Create animation
         anim = animation.FuncAnimation(fig, animate, frames=self.num_frames, 
@@ -586,6 +642,7 @@ Right Hand:
         
         # Save animation
         print(f"Creating animation with {self.num_frames} frames at {fps} FPS...")
+        print(f"Using consistent axis limits for smooth animation")
         anim.save(output_path, writer='pillow', fps=fps, dpi=dpi)
         print(f"Animation saved to {output_path}")
         
