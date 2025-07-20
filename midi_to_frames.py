@@ -114,6 +114,138 @@ def validate_sample_method(model, audio_tensor, frame_num, batch_size):
         print(f"✗ Sample method validation failed: {e}")
         return False
 
+def handle_model_output_dimensions(pose_hat, guide):
+    """Handle model output dimensions with proper validation."""
+    
+    print(f"=== Model Output Dimension Validation ===")
+    print(f"Original shapes - pose: {pose_hat.shape}, guide: {guide.shape}")
+    
+    # Validate basic requirements
+    assert pose_hat.shape[0] == guide.shape[0], f"Batch size mismatch: pose={pose_hat.shape[0]}, guide={guide.shape[0]}"
+    
+    # Check sequence length - it could be in dimension 1 or 2 depending on format
+    pose_seq_len = pose_hat.shape[1] if pose_hat.shape[-1] in [96, 6] else pose_hat.shape[2]
+    guide_seq_len = guide.shape[1] if guide.shape[-1] in [96, 6] else guide.shape[2]
+    assert pose_seq_len == guide_seq_len, f"Sequence length mismatch: pose={pose_seq_len}, guide={guide_seq_len}"
+    
+    # Expected final shapes: (batch, frames, 96) and (batch, frames, 6)
+    target_pose_features = 96
+    target_guide_features = 6
+    
+    # Check current format and adjust if needed
+    if pose_hat.shape[-1] == target_pose_features and guide.shape[-1] == target_guide_features:
+        # Already in correct format: (batch, frames, channels)
+        print("✓ Model outputs already in (batch, frames, channels) format")
+        print(f"  - Pose: {pose_hat.shape} (expected: (batch, frames, 96))")
+        print(f"  - Guide: {guide.shape} (expected: (batch, frames, 6))")
+        return pose_hat, guide
+        
+    elif pose_hat.shape[1] == target_pose_features and guide.shape[1] == target_guide_features:
+        # Need permutation: (batch, channels, frames) → (batch, frames, channels)
+        print("✓ Permuting from (batch, channels, frames) to (batch, frames, channels)")
+        print(f"  - Before permute: pose={pose_hat.shape}, guide={guide.shape}")
+        pose_hat_permuted = pose_hat.permute(0, 2, 1)
+        guide_permuted = guide.permute(0, 2, 1)
+        print(f"  - After permute: pose={pose_hat_permuted.shape}, guide={guide_permuted.shape}")
+        return pose_hat_permuted, guide_permuted
+        
+    else:
+        # Unexpected format - provide detailed error information
+        print("✗ Unexpected model output dimensions!")
+        print(f"Expected formats:")
+        print(f"  - Option A: pose=(batch, frames, 96), guide=(batch, frames, 6)")
+        print(f"  - Option B: pose=(batch, 96, frames), guide=(batch, 6, frames)")
+        print(f"Actual format:")
+        print(f"  - Pose: {pose_hat.shape}")
+        print(f"  - Guide: {guide.shape}")
+        
+        # Try to provide helpful debugging information
+        if pose_hat.dim() == 3:
+            print(f"Debug info:")
+            print(f"  - Pose last dim: {pose_hat.shape[-1]} (expected: 96)")
+            print(f"  - Pose middle dim: {pose_hat.shape[1]} (could be 96 or frames)")
+            print(f"  - Guide last dim: {guide.shape[-1]} (expected: 6)")
+            print(f"  - Guide middle dim: {guide.shape[1]} (could be 6 or frames)")
+        
+        raise ValueError(
+            f"Unexpected model output dimensions:\n"
+            f"Pose: {pose_hat.shape} (expected: (batch, frames, 96) or (batch, 96, frames))\n"
+            f"Guide: {guide.shape} (expected: (batch, frames, 6) or (batch, 6, frames))"
+        )
+
+def validate_model_output_format(pose_hat, guide):
+    """Validate model output format by checking content patterns."""
+    
+    print(f"=== Content-Based Validation ===")
+    print(f"Original shapes - pose: {pose_hat.shape}, guide: {guide.shape}")
+    
+    # Test both possible interpretations
+    if pose_hat.dim() == 3:
+        # Option A: (batch, channels, frames) - needs permutation
+        option_a_pose = pose_hat.permute(0, 2, 1)
+        # Option B: (batch, frames, channels) - no permutation needed
+        option_b_pose = pose_hat
+        
+        print(f"Option A (after permute): {option_a_pose.shape}")
+        print(f"Option B (no permute): {option_b_pose.shape}")
+        
+        # Check which makes more sense based on expected dimensions
+        # Guide should be (batch, frames, 6)
+        # Pose should be (batch, frames, 96)
+        
+        if option_a_pose.shape[-1] == 96 and guide.shape[-1] == 6:
+            print("✓ Option A appears correct: (batch, channels, frames) → (batch, frames, channels)")
+            return option_a_pose, guide
+        elif option_b_pose.shape[-1] == 96 and guide.shape[-1] == 6:
+            print("✓ Option B appears correct: already (batch, frames, channels)")
+            return option_b_pose, guide
+        else:
+            print("✗ Neither option produces expected dimensions!")
+            print(f"Expected: pose[..., 96], guide[..., 6]")
+            print(f"Got A: pose[..., {option_a_pose.shape[-1]}], guide[..., {guide.shape[-1]}]")
+            print(f"Got B: pose[..., {option_b_pose.shape[-1]}], guide[..., {option_b_pose.shape[-1]}]")
+            raise ValueError("Model output dimensions don't match expected format")
+    
+    return pose_hat, guide
+
+def test_dimension_handling():
+    """Test the dimension handling function with known inputs."""
+    print("=== Testing Dimension Handling ===")
+    
+    # Create test tensors in both possible formats
+    batch_size, frames, pose_dim, guide_dim = 1, 120, 96, 6
+    
+    # Format A: (batch, channels, frames) - needs permutation
+    test_pose_a = torch.randn(batch_size, pose_dim, frames)
+    test_guide_a = torch.randn(batch_size, guide_dim, frames)
+    
+    # Format B: (batch, frames, channels) - no permutation needed
+    test_pose_b = torch.randn(batch_size, frames, pose_dim)
+    test_guide_b = torch.randn(batch_size, frames, guide_dim)
+    
+    print("Testing Format A (batch, channels, frames):")
+    try:
+        result_a = handle_model_output_dimensions(test_pose_a, test_guide_a)
+        assert result_a[0].shape == (batch_size, frames, pose_dim), f"Expected {(batch_size, frames, pose_dim)}, got {result_a[0].shape}"
+        assert result_a[1].shape == (batch_size, frames, guide_dim), f"Expected {(batch_size, frames, guide_dim)}, got {result_a[1].shape}"
+        print("✓ Format A test passed")
+    except Exception as e:
+        print(f"✗ Format A test failed: {e}")
+        return False
+    
+    print("Testing Format B (batch, frames, channels):")
+    try:
+        result_b = handle_model_output_dimensions(test_pose_b, test_guide_b)
+        assert result_b[0].shape == (batch_size, frames, pose_dim), f"Expected {(batch_size, frames, pose_dim)}, got {result_b[0].shape}"
+        assert result_b[1].shape == (batch_size, frames, guide_dim), f"Expected {(batch_size, frames, guide_dim)}, got {result_b[1].shape}"
+        print("✓ Format B test passed")
+    except Exception as e:
+        print(f"✗ Format B test failed: {e}")
+        return False
+    
+    print("✓ All dimension handling tests passed")
+    return True
+
 def run_model_inference(model, audio_wave, device, train_sec=4):
     """Run model inference with correct method signature."""
     
@@ -124,6 +256,9 @@ def run_model_inference(model, audio_wave, device, train_sec=4):
         # Convert to tensor with proper dimensions - Piano2Posi expects 1D audio
         audio_tensor = torch.tensor(audio_wave, dtype=torch.float32).unsqueeze(0)  # (1, samples)
         audio_tensor = audio_tensor.to(device)
+        
+        # Ensure model is on the same device
+        model = model.to(device)
         
         # Calculate proper frame number based on audio duration
         frame_num = calculate_frame_number(len(audio_wave), train_sec=train_sec)
@@ -139,12 +274,8 @@ def run_model_inference(model, audio_wave, device, train_sec=4):
             batch_size = 1
             pose_hat, guide = model.sample(audio_tensor, frame_num, batch_size)
             
-            # Ensure correct output dimensions - model returns (batch, channels, frames)
-            # We need to permute to (batch, frames, channels) for processing
-            if pose_hat.dim() == 3:
-                pose_hat = pose_hat.permute(0, 2, 1)  # (batch, frames, 96)
-            if guide.dim() == 3:
-                guide = guide.permute(0, 2, 1)        # (batch, frames, 6)
+            # Handle model output dimensions with proper validation
+            pose_hat, guide = handle_model_output_dimensions(pose_hat, guide)
         
         print(f"✓ Inference completed successfully")
         print(f"  - Output pose shape: {pose_hat.shape}")
@@ -422,33 +553,52 @@ def validate_model_output(pose_hat, guide):
     print(f"  - Guide shape: {guide.shape} (batch, frames, 6_positions)")
     print(f"  - Frame count: {pose_hat.shape[1]}")
 
-def apply_coordinate_transformations(pose_hat, guide, device='cpu'):
+def apply_coordinate_transformations(pose_hat, guide, device=None):
+    # Auto-detect device if not specified
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     """
     Apply proper scaling and coordinate transformations to model outputs.
     
     Based on official PianoMotion10M inference code.
     """
     
-    # Official scaling factors from PianoMotion10M
-    scale = torch.tensor([1.5, 1.5, 25]).to(device)
+    # For RTX 5070 compatibility, always move tensors to CPU for coordinate transformations
+    # This avoids CUDA kernel compatibility issues with sm_120 architecture
+    if device.type == 'cuda':
+        print(f"  - Moving tensors to CPU for coordinate transformations (RTX 5070 compatibility)")
+        pose_cpu = pose_hat.cpu()
+        guide_cpu = guide.cpu()
+        scale = torch.tensor([1.5, 1.5, 25])  # Keep scale on CPU
+    else:
+        pose_cpu = pose_hat
+        guide_cpu = guide
+        scale = torch.tensor([1.5, 1.5, 25]).to(device)
     
     print(f"Coordinate transformation:")
     print(f"  - Scale factors: {scale.tolist()}")
-    print(f"  - Input pose shape: {pose_hat.shape}")
-    print(f"  - Input guide shape: {guide.shape}")
+    print(f"  - Input pose shape: {pose_cpu.shape}")
+    print(f"  - Input guide shape: {guide_cpu.shape}")
+    
+    # Check if tensors need permutation (batch, channels, frames) -> (batch, frames, channels)
+    if pose_cpu.shape[1] == 96 and guide_cpu.shape[1] == 6:
+        # Need to permute: (batch, channels, frames) -> (batch, frames, channels)
+        pose_cpu = pose_cpu.permute(0, 2, 1)  # (batch, frames, 96)
+        guide_cpu = guide_cpu.permute(0, 2, 1)  # (batch, frames, 6)
+        print(f"  - Permuted tensors to (batch, frames, channels) format")
     
     # Convert pose predictions to radians (rotation angles)
-    # pose_hat has shape (batch, frames, pose_params), no need to transpose
-    prediction = pose_hat[0].detach().cpu().numpy() * np.pi
+    # pose_cpu now has shape (batch, frames, pose_params)
+    prediction = pose_cpu[0].detach().numpy() * np.pi
     print(f"  - Converted pose to radians (range: [{np.min(prediction):.3f}, {np.max(prediction):.3f}])")
     
     # Apply scaling to guide positions (hand positions in world space)
     # scale.repeat(2) creates [1.5, 1.5, 25, 1.5, 1.5, 25] for both hands
     # Guide has shape (batch, frames, 6), so we need to expand scale to (1, frames, 6)
-    scale_expanded = scale.repeat(2).view(1, 1, 6).expand_as(guide)  # Expand to match guide shape
-    scaled_guide = (guide * scale_expanded)[0].cpu().numpy()  # Shape: (frames, 6)
+    scale_expanded = scale.repeat(2).view(1, 1, 6).expand(1, guide_cpu.shape[1], 6)  # Expand to match guide shape
+    scaled_guide = (guide_cpu * scale_expanded)[0].numpy()  # Shape: (frames, 6)
     print(f"  - Applied scaling to guide positions")
-    print(f"  - Guide range before scaling: [{np.min(guide[0].cpu().numpy()):.3f}, {np.max(guide[0].cpu().numpy()):.3f}]")
+    print(f"  - Guide range before scaling: [{np.min(guide_cpu[0].numpy()):.3f}, {np.max(guide_cpu[0].numpy()):.3f}]")
     print(f"  - Guide range after scaling: [{np.min(scaled_guide):.3f}, {np.max(scaled_guide):.3f}]")
     
     return prediction, scaled_guide
@@ -574,7 +724,10 @@ def add_piano_keyboard_context(hand_positions, keyboard_width=1.2, key_count=88)
     
     return keyboard_info
 
-def process_model_output_with_proper_coordinates(pose_hat, guide, device='cpu'):
+def process_model_output_with_proper_coordinates(pose_hat, guide, device=None):
+    # Auto-detect device if not specified
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     """
     Process model output with proper coordinate system handling.
     """
@@ -615,11 +768,11 @@ def process_model_output_with_proper_coordinates(pose_hat, guide, device='cpu'):
         'keyboard_info': keyboard_info
     }
 
-def process_model_output(pose_hat, guide):
+def process_model_output(pose_hat, guide, device=None):
     """Process model output according to official format with proper coordinate handling."""
     
     # Use the comprehensive coordinate system handling
-    return process_model_output_with_proper_coordinates(pose_hat, guide, device='cpu')
+    return process_model_output_with_proper_coordinates(pose_hat, guide, device=device)
 
 def save_output_to_json(processed_data, output_path):
     """Save processed data in comprehensive format for standalone visualization."""
@@ -785,6 +938,23 @@ def calculate_bone_lengths(joints, connections):
 def main():
     print("=== PianoMotion10M MIDI to Hand Motion Inference ===")
     
+    # Check GPU availability and setup
+    if torch.cuda.is_available():
+        print(f"✓ CUDA available: {torch.cuda.get_device_name(0)}")
+        print(f"✓ CUDA version: {torch.version.cuda}")
+        
+        # Check for RTX 5070 compatibility warning
+        gpu_name = torch.cuda.get_device_name(0)
+        if "RTX 5070" in gpu_name:
+            print("⚠ RTX 5070 detected - some operations may fall back to CPU for compatibility")
+            print("  This is normal and expected for this GPU model")
+        
+        # Set memory fraction to avoid OOM
+        torch.cuda.set_per_process_memory_fraction(0.8)
+        print(f"✓ GPU memory fraction set to 80%")
+    else:
+        print("⚠ CUDA not available, using CPU")
+    
     # Determine model type from checkpoint
     model_type = 'large' if 'large' in CHECKPOINT_PATH else 'base'
     print(f"Using {model_type} model configuration")
@@ -880,10 +1050,16 @@ def main():
         model.load_state_dict(state_dict)
         model.eval()
 
-        # Force CPU usage to avoid CUDA compatibility issues
-        device = torch.device('cpu')
+        # Use GPU if available, otherwise fall back to CPU
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model.to(device)
         print(f"✓ Model loaded on device: {device}")
+        if device.type == 'cuda':
+            print(f"✓ Using GPU: {torch.cuda.get_device_name(0)}")
+            print(f"✓ GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+            # Clear GPU cache to free memory
+            torch.cuda.empty_cache()
+            print(f"✓ GPU cache cleared")
         print(f"✓ Using transformer architecture with {diffusion_args.num_layer} layers")
         
     except Exception as e:
@@ -901,9 +1077,18 @@ def main():
             return
         
         # Run actual inference with proper method signature
+        if device.type == 'cuda':
+            print(f"GPU memory before inference: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+        
         pose_hat, guide, actual_frame_num = run_model_inference(
             model, audio_wave, device, train_sec=diffusion_args.train_sec
         )
+        
+        if device.type == 'cuda':
+            print(f"GPU memory after inference: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+            # Clear GPU cache after inference
+            torch.cuda.empty_cache()
+            print(f"GPU memory after cache clear: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
         
         # Validate output dimensions
         validate_model_output(pose_hat, guide)

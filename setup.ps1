@@ -11,6 +11,7 @@ pip install --upgrade pip
 
 # Install PyTorch (CPU-only to simplify; for GPU, install the CUDA-enabled wheel as appropriate)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install --upgrade torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/test/cu128
 
 # Install Hugging Face Transformers (for loading the HuBERT audio model) and other needed libs
 pip install transformers numpy scipy librosa pretty_midi matplotlib pytorch-lightning einops smplx

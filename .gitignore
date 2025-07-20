@@ -2,6 +2,7 @@ output_frames/
 figs/
 __pycache__/
 *.pyc
+.cursor/
 
 PianoMotion10M/checkpoints
 PianoMotion10M/mano/*.pkl
