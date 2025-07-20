@@ -622,10 +622,82 @@ def process_model_output(pose_hat, guide):
     return process_model_output_with_proper_coordinates(pose_hat, guide, device='cpu')
 
 def save_output_to_json(processed_data, output_path):
-    """Save processed data in correct format."""
+    """Save processed data in comprehensive format for standalone visualization."""
     
     output_data = {"frames": []}
     num_frames = processed_data['num_frames']
+    
+    # Import MANO conversion to get joint data
+    from mano_utils import convert_mano_params_to_joints
+    
+    # Get joint data for all frames
+    print("Converting MANO parameters to joint positions for all frames...")
+    all_left_joints = []
+    all_right_joints = []
+    
+    for i in range(num_frames):
+        left_pos = processed_data['left_hand_position'][i]
+        right_pos = processed_data['right_hand_position'][i]
+        left_angles = processed_data['left_hand_angles'][i]
+        right_angles = processed_data['right_hand_angles'][i]
+        
+        # Convert to joint positions
+        left_joints = convert_mano_params_to_joints(left_pos, left_angles, 'left')
+        right_joints = convert_mano_params_to_joints(right_pos, right_angles, 'right')
+        
+        all_left_joints.append(left_joints)
+        all_right_joints.append(right_joints)
+    
+    # MANO joint structure information
+    mano_joint_names = [
+        "Wrist",           # 0
+        "Thumb_CMC",       # 1
+        "Thumb_MCP",       # 2
+        "Thumb_IP",        # 3
+        "Thumb_Tip",       # 4
+        "Index_MCP",       # 5
+        "Index_PIP",       # 6
+        "Index_DIP",       # 7
+        "Index_Tip",       # 8
+        "Middle_MCP",      # 9
+        "Middle_PIP",      # 10
+        "Middle_DIP",      # 11
+        "Middle_Tip",      # 12
+        "Ring_MCP",        # 13
+        "Ring_PIP",        # 14
+        "Ring_DIP",        # 15
+        "Ring_Tip",        # 16
+        "Little_MCP",      # 17
+        "Little_PIP",      # 18
+        "Little_DIP",      # 19
+        "Little_Tip"       # 20
+    ]
+    
+    # MANO joint connections (parent-child relationships)
+    mano_joint_connections = [
+        # Wrist to finger bases
+        (0, 1), (0, 5), (0, 9), (0, 13), (0, 17),
+        # Thumb
+        (1, 2), (2, 3), (3, 4),
+        # Index
+        (5, 6), (6, 7), (7, 8),
+        # Middle  
+        (9, 10), (10, 11), (11, 12),
+        # Ring
+        (13, 14), (14, 15), (15, 16),
+        # Little
+        (17, 18), (18, 19), (19, 20)
+    ]
+    
+    # Finger grouping information
+    finger_groups = {
+        "thumb": {"joints": [1, 2, 3, 4], "color": "#FF6B6B"},
+        "index": {"joints": [5, 6, 7, 8], "color": "#4ECDC4"},
+        "middle": {"joints": [9, 10, 11, 12], "color": "#45B7D1"},
+        "ring": {"joints": [13, 14, 15, 16], "color": "#96CEB4"},
+        "little": {"joints": [17, 18, 19, 20], "color": "#FFEAA7"},
+        "wrist": {"joints": [0], "color": "#DDA0DD"}
+    }
     
     for i in range(num_frames):
         frame_data = {
@@ -638,30 +710,77 @@ def save_output_to_json(processed_data, output_path):
             
             # Hand rotation parameters (48 per hand)
             "left_hand_angles": processed_data['left_hand_angles'][i].tolist(),
-            "right_hand_angles": processed_data['right_hand_angles'][i].tolist()
+            "right_hand_angles": processed_data['right_hand_angles'][i].tolist(),
+            
+            # Absolute joint coordinates (21 joints per hand)
+            "left_hand_joints": all_left_joints[i].tolist(),
+            "right_hand_joints": all_right_joints[i].tolist(),
+            
+            # Bone lengths (calculated from joint positions)
+            "left_hand_bone_lengths": calculate_bone_lengths(all_left_joints[i], mano_joint_connections).tolist(),
+            "right_hand_bone_lengths": calculate_bone_lengths(all_right_joints[i], mano_joint_connections).tolist()
         }
         output_data["frames"].append(frame_data)
     
-    # Add proper metadata
-    output_data["metadata"] = {
+    # Add comprehensive metadata
+    metadata = {
         "total_frames": num_frames,
         "fps": 30,
-        "data_format": "MANO_parameterization",
-        "coordinate_system": "3D_positions_plus_rotation_angles",
+        "data_format": "comprehensive_hand_data",
+        "coordinate_system": "3D_positions_plus_rotation_angles_plus_joint_coordinates",
         "hand_angles_per_hand": 48,
+        "joints_per_hand": 21,
         "position_dimensions": 3,
         "angle_units": "radians",
         "model_type": "PianoMotion10M_diffusion_with_position_guide",
+        "mano_joint_names": mano_joint_names,
+        "mano_joint_connections": mano_joint_connections,
+        "finger_groups": finger_groups,
         "notes": [
             "Hand positions are 3D coordinates in world space",
             "Hand angles are MANO rotation parameters (48 per hand)",
-            "To get joint positions, use MANO forward kinematics",
-            "Scaling factors [1.5, 1.5, 25] applied to positions"
+            "Joint coordinates are absolute 3D positions (21 per hand)",
+            "Bone lengths are calculated from joint positions",
+            "Scaling factors [1.5, 1.5, 25] applied to positions",
+            "All data needed for standalone visualization included"
         ]
     }
     
+    # Safely add optional metadata fields
+    for key in ['coordinate_info', 'spatial_info', 'keyboard_info']:
+        if key in processed_data:
+            try:
+                # Convert numpy arrays to lists if present
+                value = processed_data[key]
+                if isinstance(value, dict):
+                    converted_value = {}
+                    for k, v in value.items():
+                        if isinstance(v, np.ndarray):
+                            converted_value[k] = v.tolist()
+                        else:
+                            converted_value[k] = v
+                    metadata[key] = converted_value
+                else:
+                    metadata[key] = value
+            except:
+                # Skip if not serializable
+                pass
+    
+    output_data["metadata"] = metadata
+    
     with open(output_path, "w") as f:
         json.dump(output_data, f, indent=2)
+
+def calculate_bone_lengths(joints, connections):
+    """Calculate bone lengths from joint positions."""
+    bone_lengths = []
+    for parent, child in connections:
+        if parent < len(joints) and child < len(joints):
+            length = np.linalg.norm(joints[child] - joints[parent])
+            bone_lengths.append(length)
+        else:
+            bone_lengths.append(0.0)
+    return np.array(bone_lengths)
 
 def main():
     print("=== PianoMotion10M MIDI to Hand Motion Inference ===")

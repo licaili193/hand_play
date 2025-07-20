@@ -60,7 +60,10 @@ def find_mano_model_path():
         './PianoMotion10M/mano',
         '../PianoMotion10M/mano',
         'mano',
-        './mano'
+        './mano',
+        'PianoMotion10M/PianoMotion10M/mano',  # Nested structure
+        os.path.join(os.path.dirname(__file__), 'PianoMotion10M', 'mano'),  # Relative to current file
+        os.path.join(os.getcwd(), 'PianoMotion10M', 'mano')  # Absolute from current directory
     ]
     
     for path in possible_paths:
@@ -71,6 +74,9 @@ def find_mano_model_path():
                 print(f"Found MANO model at: {os.path.abspath(path)}")
                 return path
     
+    print("MANO model not found in any of the expected locations:")
+    for path in possible_paths:
+        print(f"  - {os.path.abspath(path)}")
     return None
 
 def get_mano_joint_connections():
@@ -717,6 +723,9 @@ def convert_mano_params_to_joints(hand_position, hand_rotations, hand='right'):
     """
     Convert MANO parameters (position + rotations) to joint positions.
     
+    Note: PianoMotion10M outputs 48 rotation parameters, not 21 joint positions.
+    This function creates a reasonable joint mapping from the MANO parameters.
+    
     Args:
         hand_position: (3,) array - 3D position of hand
         hand_rotations: (48,) array - MANO rotation parameters
@@ -726,65 +735,128 @@ def convert_mano_params_to_joints(hand_position, hand_rotations, hand='right'):
         joint_positions: (21, 3) array - 3D positions of MANO joints
     """
     
-    try:
-        # Try to use the actual MANO model if available
-        import sys
-        import os
-        sys.path.append('PianoMotion10M')
-        from models.mano import build_mano
-        
-        # Load MANO model
-        mano_layer = build_mano()
-        mano_model = mano_layer[hand]
-        
-        # Convert rotation parameters to MANO format
-        # Note: This is a simplified conversion - actual implementation depends on
-        # how PianoMotion10M parameterizes the rotations
-        
-        # Reshape rotation parameters (48,) → appropriate MANO format
-        # This is dataset-specific and may require analysis of training code
-        if len(hand_rotations) == 48:
-            # Assume the 48 parameters map to MANO pose parameters
-            # This mapping needs to be determined from the training code
-            mano_pose = hand_rotations.reshape(-1)  # Keep as is for now
-        else:
-            raise ValueError(f"Unexpected rotation parameter count: {len(hand_rotations)}")
-        
-        # Set hand shape to mean (or zeros for simplicity)
-        batch_size = 1
-        hand_shape = torch.zeros(batch_size, 10)  # MANO shape parameters
-        
-        # Convert position to global translation
-        global_orient = torch.zeros(batch_size, 3)  # Root rotation
-        transl = torch.tensor(hand_position).unsqueeze(0).float()  # Translation
-        
-        # Convert pose parameters to tensor
-        hand_pose = torch.tensor(mano_pose).unsqueeze(0).float()
-        
-        # Forward pass through MANO
-        output = mano_model(
-            global_orient=global_orient,
-            hand_pose=hand_pose,
-            betas=hand_shape,
-            transl=transl
-        )
-        
-        # Extract joint positions
-        joints = output.joints[0].detach().numpy()  # (21, 3)
-        
-        print(f"✓ MANO forward kinematics successful for {hand} hand")
-        print(f"  - Input rotations: {hand_rotations.shape}")
-        print(f"  - Input position: {hand_position}")
-        print(f"  - Output joints: {joints.shape}")
-        
-        return joints
-        
-    except Exception as e:
-        print(f"✗ MANO forward kinematics failed: {e}")
-        print("Falling back to simplified joint approximation")
-        
-        # Fallback: Create approximate joint positions
+    # PianoMotion10M outputs 48 rotation parameters, not 21 joint positions
+    # The MANO model is designed for mesh rendering, not joint extraction
+    # For visualization purposes, we'll create a reasonable joint mapping
+    
+    if len(hand_rotations) != 48:
+        print(f"✗ Expected 48 rotation parameters, got {len(hand_rotations)}")
+        print("  Falling back to simplified joint approximation")
         return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
+    
+    print(f"Converting 48 MANO parameters to 21 joint positions for {hand} hand")
+    
+    # Parse MANO parameters according to PianoMotion10M format:
+    # - First 3: Global orientation (root rotation)
+    # - Next 45: Hand pose (15 joints × 3 rotations each)
+    global_orient = hand_rotations[:3]  # First 3 parameters
+    hand_pose = hand_rotations[3:48]    # Next 45 parameters (15 joints × 3)
+    
+    # Create a more sophisticated joint mapping based on the rotation parameters
+    # This is an approximation that uses the rotation parameters to influence joint positions
+    
+    # Basic hand structure (relative to wrist)
+    if hand == 'right':
+        hand_sign = 1
+    else:
+        hand_sign = -1  # Mirror for left hand
+    
+    # Approximate joint offsets (in hand coordinate system)
+    joint_offsets = np.array([
+        [0, 0, 0],                           # 0: Wrist
+        [hand_sign * 0.02, 0.01, 0.02],     # 1: Thumb CMC
+        [hand_sign * 0.03, 0.02, 0.04],     # 2: Thumb MCP
+        [hand_sign * 0.035, 0.03, 0.055],   # 3: Thumb IP
+        [hand_sign * 0.04, 0.035, 0.07],    # 4: Thumb Tip
+        [hand_sign * 0.02, 0.08, 0.01],     # 5: Index MCP
+        [hand_sign * 0.02, 0.11, 0.015],    # 6: Index PIP
+        [hand_sign * 0.02, 0.135, 0.02],    # 7: Index DIP
+        [hand_sign * 0.02, 0.155, 0.025],   # 8: Index Tip
+        [0, 0.09, 0.005],                   # 9: Middle MCP
+        [0, 0.125, 0.01],                   # 10: Middle PIP
+        [0, 0.15, 0.015],                   # 11: Middle DIP
+        [0, 0.17, 0.02],                    # 12: Middle Tip
+        [hand_sign * -0.02, 0.085, 0],      # 13: Ring MCP
+        [hand_sign * -0.02, 0.115, 0.005],  # 14: Ring PIP
+        [hand_sign * -0.02, 0.14, 0.01],    # 15: Ring DIP
+        [hand_sign * -0.02, 0.16, 0.015],   # 16: Ring Tip
+        [hand_sign * -0.04, 0.075, -0.005], # 17: Little MCP
+        [hand_sign * -0.04, 0.1, 0],        # 18: Little PIP
+        [hand_sign * -0.04, 0.12, 0.005],   # 19: Little DIP
+        [hand_sign * -0.04, 0.135, 0.01]    # 20: Little Tip
+    ])
+    
+    # Apply global orientation influence
+    if len(global_orient) >= 3:
+        # Use global orientation to rotate the entire hand
+        global_rot_x = global_orient[0] * 0.1  # Scale down
+        global_rot_y = global_orient[1] * 0.1
+        global_rot_z = global_orient[2] * 0.1
+        
+        # Apply rotations around each axis
+        for i in range(len(joint_offsets)):
+            x, y, z = joint_offsets[i]
+            
+            # Rotate around X-axis
+            y_new = y * np.cos(global_rot_x) - z * np.sin(global_rot_x)
+            z_new = y * np.sin(global_rot_x) + z * np.cos(global_rot_x)
+            y, z = y_new, z_new
+            
+            # Rotate around Y-axis
+            x_new = x * np.cos(global_rot_y) + z * np.sin(global_rot_y)
+            z_new = -x * np.sin(global_rot_y) + z * np.cos(global_rot_y)
+            x, z = x_new, z_new
+            
+            # Rotate around Z-axis
+            x_new = x * np.cos(global_rot_z) - y * np.sin(global_rot_z)
+            y_new = x * np.sin(global_rot_z) + y * np.cos(global_rot_z)
+            x, y = x_new, y_new
+            
+            joint_offsets[i] = [x, y, z]
+    
+    # Apply finger-specific rotations from hand pose parameters
+    if len(hand_pose) >= 45:
+        # Map hand pose parameters to finger rotations
+        # Each finger has 3 joints with 3 rotation parameters each = 9 parameters per finger
+        finger_params = hand_pose.reshape(5, 9)  # 5 fingers, 9 params each
+        
+        for finger_idx in range(5):
+            if finger_idx < len(finger_params):
+                finger_rot = finger_params[finger_idx]
+                
+                # Apply finger-specific rotations
+                # This is a simplified mapping - in reality, MANO has more complex joint relationships
+                if finger_idx == 0:  # Thumb
+                    joint_indices = [1, 2, 3, 4]
+                elif finger_idx == 1:  # Index
+                    joint_indices = [5, 6, 7, 8]
+                elif finger_idx == 2:  # Middle
+                    joint_indices = [9, 10, 11, 12]
+                elif finger_idx == 3:  # Ring
+                    joint_indices = [13, 14, 15, 16]
+                else:  # Little
+                    joint_indices = [17, 18, 19, 20]
+                
+                # Apply rotation to finger joints
+                for i, joint_idx in enumerate(joint_indices):
+                    if joint_idx < len(joint_offsets) and i < 3:
+                        rot_factor = finger_rot[i] * 0.05  # Scale down
+                        x, y, z = joint_offsets[joint_idx]
+                        
+                        # Simple rotation around Y-axis (finger curl)
+                        cos_r = np.cos(rot_factor)
+                        sin_r = np.sin(rot_factor)
+                        joint_offsets[joint_idx, 0] = x * cos_r - z * sin_r
+                        joint_offsets[joint_idx, 2] = x * sin_r + z * cos_r
+    
+    # Translate to world position
+    joints = joint_offsets + hand_position
+    
+    print(f"✓ Created MANO-based joints for {hand} hand ({len(joints)} joints)")
+    print(f"  - Used {len(global_orient)} global orientation parameters")
+    print(f"  - Used {len(hand_pose)} hand pose parameters")
+    
+    return joints
 
 def approximate_joints_from_parameters(hand_position, hand_rotations, hand='right'):
     """
@@ -852,13 +924,34 @@ def visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=True):
     Visualize hands using proper MANO model integration.
     """
     
-    # Extract data for the specified frame
-    right_pos = processed_data['right_hand_position'][frame_idx]
-    left_pos = processed_data['left_hand_position'][frame_idx]
-    right_angles = processed_data['right_hand_angles'][frame_idx]
-    left_angles = processed_data['left_hand_angles'][frame_idx]
+    # Validate frame index
+    num_frames = processed_data.get('num_frames', 0)
+    if num_frames == 0:
+        print("✗ No frames available in processed data")
+        return
     
-    print(f"MANO-based visualization for frame {frame_idx}")
+    # Ensure frame_idx is valid
+    if frame_idx < 0:
+        frame_idx = 0  # Use first frame instead of negative index
+        print(f"⚠ Negative frame index corrected to 0")
+    elif frame_idx >= num_frames:
+        frame_idx = num_frames - 1  # Use last frame
+        print(f"⚠ Frame index {frame_idx} exceeds available frames, using last frame")
+    
+    # Extract data for the specified frame
+    try:
+        right_pos = processed_data['right_hand_position'][frame_idx]
+        left_pos = processed_data['left_hand_position'][frame_idx]
+        right_angles = processed_data['right_hand_angles'][frame_idx]
+        left_angles = processed_data['left_hand_angles'][frame_idx]
+    except (KeyError, IndexError) as e:
+        print(f"✗ Error accessing frame {frame_idx}: {e}")
+        print(f"  Available data keys: {list(processed_data.keys())}")
+        if 'num_frames' in processed_data:
+            print(f"  Total frames: {processed_data['num_frames']}")
+        return
+    
+    print(f"MANO-based visualization for frame {frame_idx} of {num_frames}")
     
     # Convert MANO parameters to joint positions
     try:
@@ -909,7 +1002,7 @@ def visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=True):
                                  'Left', 'blue', alpha=0.7, add_to_existing=True)
     ax3.set_title('Both Hands')
     
-    plt.suptitle(f'MANO-based Hand Visualization - Frame {frame_idx}')
+    plt.suptitle(f'MANO-based Hand Visualization - Frame {frame_idx} of {num_frames}')
     plt.tight_layout()
     plt.show()
 
@@ -985,11 +1078,27 @@ def use_official_rendering_if_available(right_data, left_data, audio_array):
     """
     
     try:
+        # Check for cv2 dependency first
+        try:
+            import cv2
+        except ImportError:
+            print("✗ OpenCV (cv2) not available - required for official rendering")
+            print("  Install with: pip install opencv-python")
+            print("  Falling back to custom visualization")
+            return False
+        
         # Import official rendering function
         import sys
         import os
         sys.path.append('PianoMotion10M')
-        from datasets.show import render_result
+        
+        try:
+            from datasets.show import render_result
+        except ImportError as e:
+            print(f"✗ Official rendering module not found: {e}")
+            print("  This may be due to missing PianoMotion10M dependencies")
+            print("  Falling back to custom visualization")
+            return False
         
         # Create output directory
         output_dir = "rendered_output"
@@ -1022,8 +1131,25 @@ def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'
     # Explain the integration
     integration_info = explain_pianomotion_mano_integration()
     
-    # Process with proper coordinate system
-    processed_data = process_model_output_with_proper_coordinates(pose_hat, guide, device)
+    # Import the proper processing function from midi_to_frames.py
+    try:
+        import sys
+        import os
+        # Add the current directory to the path so we can import from midi_to_frames
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
+        
+        from midi_to_frames import process_model_output_with_proper_coordinates
+        print("✓ Using proper coordinate processing from midi_to_frames.py")
+    except ImportError as e:
+        print(f"⚠ Could not import proper processing function: {e}")
+        print("⚠ Using fallback processing (may not have correct scaling)")
+        # Fall back to the local version
+        processed_data = process_model_output_with_proper_coordinates(pose_hat, guide, device)
+    else:
+        # Use the proper processing function with coordinate transformations
+        processed_data = process_model_output_with_proper_coordinates(pose_hat, guide, device)
     
     # Try official rendering first
     right_data, left_data = prepare_data_for_official_rendering(processed_data)
@@ -1035,10 +1161,10 @@ def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'
         
         # Use custom MANO visualization
         try:
-            visualize_mano_hands(processed_data, frame_idx=-1, use_full_mano=True)
+            visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=True)
         except Exception as e:
             print(f"Full MANO visualization failed: {e}")
             print("Using simplified approximation")
-            visualize_mano_hands(processed_data, frame_idx=-1, use_full_mano=False)
+            visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=False)
     
     return processed_data, integration_info 

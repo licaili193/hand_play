@@ -1,9 +1,9 @@
 """
-Hand Gesture Visualization Script
+Standalone Hand Gesture Visualization Script
 
-This script visualizes predicted hand gestures from a JSON file containing
-frame-by-frame hand joint coordinates. It provides both static 3D visualization
-and animated playback of the hand motion sequence.
+This script visualizes predicted hand gestures from a comprehensive JSON file containing
+frame-by-frame hand data including positions, angles, joint coordinates, and bone lengths.
+It is completely self-contained and only depends on standard plotting libraries.
 
 Features:
 - 3D visualization of both hands with anatomically correct finger coloring
@@ -11,6 +11,7 @@ Features:
 - Animation playback with adjustable speed
 - Export capabilities for individual frames or animations
 - Real-time statistics and motion analysis
+- Standalone operation - no external dependencies beyond plotting libraries
 """
 
 import json
@@ -24,25 +25,18 @@ import os
 from typing import List, Dict, Tuple, Optional
 import time
 
-# Import our utility functions
-from mano_utils import (
-    get_finger_colors, 
-    get_finger_ranges, 
-    visualize_hand_3d,
-    get_mano_joint_names
-)
-
-class HandGestureVisualizer:
+class StandaloneHandGestureVisualizer:
     """
-    A comprehensive hand gesture visualizer for piano motion data.
+    A completely standalone hand gesture visualizer for piano motion data.
+    Only depends on standard plotting libraries.
     """
     
     def __init__(self, json_file_path: str, view_mode: str = '3d'):
         """
-        Initialize the visualizer with hand motion data.
+        Initialize the visualizer with comprehensive hand motion data.
         
         Args:
-            json_file_path (str): Path to the JSON file containing hand motion data
+            json_file_path (str): Path to the comprehensive JSON file containing hand motion data
             view_mode (str): Visualization mode - '3d' or '2d_topdown'
         """
         self.json_file_path = json_file_path
@@ -54,10 +48,11 @@ class HandGestureVisualizer:
         self.frames = self.data.get('frames', [])
         self.num_frames = len(self.frames)
         
-        # Get joint structure information
-        self.finger_colors = get_finger_colors()
-        self.finger_ranges = get_finger_ranges()
-        self.mano_joint_names = get_mano_joint_names()
+        # Extract metadata
+        self.metadata = self.data.get('metadata', {})
+        self.mano_joint_names = self.metadata.get('mano_joint_names', [])
+        self.mano_joint_connections = self.metadata.get('mano_joint_connections', [])
+        self.finger_groups = self.metadata.get('finger_groups', {})
         
         # Animation state
         self.current_frame = 0
@@ -70,15 +65,16 @@ class HandGestureVisualizer:
         self.auto_scale = True
         
         print(f"Loaded {self.num_frames} frames from {json_file_path}")
-        print(f"Each frame contains 16 joints per hand (32 total joints)")
+        print(f"Data format: {self.metadata.get('data_format', 'unknown')}")
+        print(f"Joints per hand: {self.metadata.get('joints_per_hand', 'unknown')}")
         print(f"View mode: {self.view_mode.upper()}")
     
     def load_data(self) -> Dict:
         """
-        Load hand motion data from JSON file.
+        Load comprehensive hand motion data from JSON file.
         
         Returns:
-            Dict: Loaded data containing frames
+            Dict: Loaded data containing frames and metadata
         """
         try:
             with open(self.json_file_path, 'r') as f:
@@ -89,24 +85,43 @@ class HandGestureVisualizer:
         except json.JSONDecodeError:
             raise ValueError(f"Invalid JSON format in file: {self.json_file_path}")
     
-    def get_frame_data(self, frame_idx: int) -> Tuple[np.ndarray, np.ndarray]:
+    def get_frame_data(self, frame_idx: int) -> Tuple[np.ndarray, np.ndarray, Dict, Dict]:
         """
-        Extract left and right hand joint coordinates for a given frame.
+        Extract comprehensive hand data for a given frame.
         
         Args:
             frame_idx (int): Frame index
             
         Returns:
-            Tuple[np.ndarray, np.ndarray]: Left and right hand joint coordinates
+            Tuple containing:
+            - left_hand_joints: Left hand joint coordinates (21, 3)
+            - right_hand_joints: Right hand joint coordinates (21, 3)
+            - left_hand_info: Left hand additional info (position, angles, bone lengths)
+            - right_hand_info: Right hand additional info (position, angles, bone lengths)
         """
         if frame_idx >= self.num_frames:
             raise IndexError(f"Frame index {frame_idx} out of range (0-{self.num_frames-1})")
         
         frame_data = self.frames[frame_idx]
-        left_hand = np.array(frame_data['left_hand_joints'])
-        right_hand = np.array(frame_data['right_hand_joints'])
         
-        return left_hand, right_hand
+        # Extract joint coordinates (already calculated)
+        left_hand_joints = np.array(frame_data['left_hand_joints'])
+        right_hand_joints = np.array(frame_data['right_hand_joints'])
+        
+        # Extract additional information
+        left_hand_info = {
+            'position': np.array(frame_data['left_hand_position']),
+            'angles': np.array(frame_data['left_hand_angles']),
+            'bone_lengths': np.array(frame_data['left_hand_bone_lengths'])
+        }
+        
+        right_hand_info = {
+            'position': np.array(frame_data['right_hand_position']),
+            'angles': np.array(frame_data['right_hand_angles']),
+            'bone_lengths': np.array(frame_data['right_hand_bone_lengths'])
+        }
+        
+        return left_hand_joints, right_hand_joints, left_hand_info, right_hand_info
     
     def calculate_motion_statistics(self) -> Dict:
         """
@@ -121,8 +136,8 @@ class HandGestureVisualizer:
         # Calculate joint velocities (movement between frames)
         velocities = []
         for i in range(1, self.num_frames):
-            left_prev, right_prev = self.get_frame_data(i-1)
-            left_curr, right_curr = self.get_frame_data(i)
+            left_prev, right_prev, _, _ = self.get_frame_data(i-1)
+            left_curr, right_curr, _, _ = self.get_frame_data(i)
             
             # Calculate velocity for each joint
             left_vel = np.linalg.norm(left_curr - left_prev, axis=1)
@@ -160,144 +175,112 @@ class HandGestureVisualizer:
         
         return stats
     
-    def set_uniform_axes(self, ax):
+    def plot_hand_3d(self, joints: np.ndarray, connections: List[Tuple[int, int]], 
+                    title: str, color: str, ax=None, alpha: float = 1.0, 
+                    add_to_existing: bool = False):
         """
-        Set uniform tick spacing and grid for 3D axes.
+        Plot a hand in 3D using joint coordinates and connections.
         
         Args:
-            ax: matplotlib 3D axis object
+            joints: Joint coordinates (21, 3)
+            connections: List of (parent, child) joint connections
+            title: Title for the plot
+            color: Color for the hand
+            ax: Matplotlib 3D axis
+            alpha: Transparency
+            add_to_existing: Whether to add to existing plot
         """
-        # Get current axis limits
-        x_lim = ax.get_xlim()
-        y_lim = ax.get_ylim()
-        z_lim = ax.get_zlim()
+        if ax is None:
+            fig = plt.figure(figsize=(8, 6))
+            ax = fig.add_subplot(111, projection='3d')
         
-        # Calculate the range for each axis
-        x_range = x_lim[1] - x_lim[0]
-        y_range = y_lim[1] - y_lim[0]
-        z_range = z_lim[1] - z_lim[0]
+        if not add_to_existing:
+            ax.clear()
         
-        # Find the maximum range to determine uniform tick spacing
-        max_range = max(x_range, y_range, z_range)
+        # Plot joints
+        ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], 
+                  c=color, s=50, alpha=alpha, label=title)
         
-        # Calculate number of ticks (aim for 5-8 ticks per axis)
-        num_ticks = 6
-        tick_spacing = max_range / num_ticks
+        # Plot connections
+        for parent, child in connections:
+            if parent < len(joints) and child < len(joints):
+                ax.plot([joints[parent, 0], joints[child, 0]],
+                       [joints[parent, 1], joints[child, 1]],
+                       [joints[parent, 2], joints[child, 2]], 
+                       color=color, linewidth=2, alpha=alpha)
         
-        # Set uniform tick spacing for all axes
-        ax.set_xticks(np.arange(x_lim[0], x_lim[1] + tick_spacing, tick_spacing))
-        ax.set_yticks(np.arange(y_lim[0], y_lim[1] + tick_spacing, tick_spacing))
-        ax.set_zticks(np.arange(z_lim[0], z_lim[1] + tick_spacing, tick_spacing))
+        # Highlight key joints (wrist and fingertips)
+        key_joints = [0, 4, 8, 12, 16, 20]  # Wrist and fingertips
+        for joint_idx in key_joints:
+            if joint_idx < len(joints):
+                ax.scatter(joints[joint_idx, 0], joints[joint_idx, 1], joints[joint_idx, 2], 
+                          c='black', s=80, alpha=alpha*0.8, marker='o', edgecolors=color)
         
-        # Enable grid with uniform spacing
-        ax.grid(True, alpha=0.3)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y') 
+        ax.set_zlabel('Z')
+        ax.set_title(title)
+        ax.legend()
         
-        # Set aspect ratio to be equal for all axes
-        ax.set_box_aspect([1, 1, 1])
+        # Set axis limits (same as midi_to_frames.py)
+        max_range = 0.1  # Adjust based on hand size
+        ax.set_xlim([joints[0, 0] - max_range, joints[0, 0] + max_range])
+        ax.set_ylim([joints[0, 1] - max_range, joints[0, 1] + max_range])
+        ax.set_zlim([joints[0, 2] - max_range, joints[0, 2] + max_range])
+        
+        return ax
     
-    def set_uniform_axes_2d(self, ax):
+    def plot_hand_2d_topdown(self, joints: np.ndarray, connections: List[Tuple[int, int]], 
+                           title: str, color: str, ax=None, show_labels: bool = True):
         """
-        Set uniform tick spacing and grid for 2D axes.
+        Plot a hand in 2D top-down view using joint coordinates and connections.
         
         Args:
-            ax: matplotlib 2D axis object
-        """
-        # Get current axis limits
-        x_lim = ax.get_xlim()
-        y_lim = ax.get_ylim()
-        
-        # Calculate the range for each axis
-        x_range = x_lim[1] - x_lim[0]
-        y_range = y_lim[1] - y_lim[0]
-        
-        # Find the maximum range to determine uniform tick spacing
-        max_range = max(x_range, y_range)
-        
-        # Calculate number of ticks (aim for 5-8 ticks per axis)
-        num_ticks = 6
-        tick_spacing = max_range / num_ticks
-        
-        # Set uniform tick spacing for all axes
-        ax.set_xticks(np.arange(x_lim[0], x_lim[1] + tick_spacing, tick_spacing))
-        ax.set_yticks(np.arange(y_lim[0], y_lim[1] + tick_spacing, tick_spacing))
-        
-        # Enable grid with uniform spacing
-        ax.grid(True, alpha=0.3)
-        
-        # Set aspect ratio to be equal
-        ax.set_aspect('equal')
-    
-    def visualize_hand_2d_topdown(self, coords, title="Hand", ax=None, show_labels=True):
-        """
-        Visualize a single hand in 2D top-down view (X-Y plane).
-        
-        Args:
-            coords (np.ndarray): Joint coordinates of shape (num_joints, 3)
-            title (str): Title for the plot
-            ax (matplotlib.axes.Axes, optional): Existing 2D axis to plot on
-            show_labels (bool): Whether to show joint labels
-            
-        Returns:
-            matplotlib.axes.Axes: The axis object
+            joints: Joint coordinates (21, 3)
+            connections: List of (parent, child) joint connections
+            title: Title for the plot
+            color: Color for the hand
+            ax: Matplotlib 2D axis
+            show_labels: Whether to show joint labels
         """
         if ax is None:
             fig = plt.figure(figsize=(8, 6))
             ax = fig.add_subplot(111)
         
-        finger_colors = self.finger_colors
-        finger_ranges = self.finger_ranges
+        # Plot joints
+        ax.scatter(joints[:, 0], joints[:, 1], c=color, s=50, alpha=0.8, 
+                  edgecolors='black', linewidth=1, label=title)
         
-        # Plot wrist with special color and size
-        ax.scatter(coords[0, 0], coords[0, 1], 
-                  color=finger_colors['wrist'], s=100, alpha=0.9, 
-                  edgecolors='black', linewidth=2, zorder=10, label='Wrist')
+        # Plot connections
+        for parent, child in connections:
+            if parent < len(joints) and child < len(joints):
+                ax.plot([joints[parent, 0], joints[child, 0]],
+                       [joints[parent, 1], joints[child, 1]], 
+                       color=color, linewidth=2, alpha=0.8)
         
-        # Plot each finger with different colors
-        for finger_name, (start_joint, end_joint) in finger_ranges.items():
-            finger_joints = list(range(start_joint, end_joint + 1))
-            finger_color = finger_colors[finger_name]
-            
-            # Plot finger joints
-            ax.scatter(coords[finger_joints, 0], coords[finger_joints, 1], 
-                      c=finger_color, s=60, alpha=0.8, edgecolors='black', 
-                      linewidth=1, zorder=5, label=finger_name.capitalize())
-            
-            # Plot finger connections
-            for i in range(len(finger_joints) - 1):
-                parent = finger_joints[i]
-                child = finger_joints[i + 1]
-                ax.plot([coords[parent, 0], coords[child, 0]],
-                       [coords[parent, 1], coords[child, 1]], 
-                       color=finger_color, linewidth=3, alpha=0.8, zorder=4)
+        # Highlight key joints
+        key_joints = [0, 4, 8, 12, 16, 20]  # Wrist and fingertips
+        for joint_idx in key_joints:
+            if joint_idx < len(joints):
+                ax.scatter(joints[joint_idx, 0], joints[joint_idx, 1], 
+                          c='black', s=80, alpha=0.8, marker='o', edgecolors=color)
         
-        # Plot connections from wrist to finger bases
-        wrist_connections = [(0, 1), (0, 4), (0, 7), (0, 10), (0, 13)]
-        for parent, child in wrist_connections:
-            if parent < coords.shape[0] and child < coords.shape[0]:
-                ax.plot([coords[parent, 0], coords[child, 0]],
-                       [coords[parent, 1], coords[child, 1]], 
-                       color=finger_colors['wrist'], linewidth=4, alpha=0.9, zorder=3)
-        
-        if show_labels:
-            # Add joint labels for key joints
-            joint_labels = {
-                0: 'Wrist',
-                1: 'T1', 4: 'I1', 7: 'M1', 10: 'R1', 13: 'L1',  # Finger bases
-                3: 'T3', 6: 'I3', 9: 'M3', 12: 'R3', 15: 'L3'   # Finger tips
-            }
-            
-            for joint_idx, label in joint_labels.items():
-                if joint_idx < coords.shape[0]:
-                    ax.text(coords[joint_idx, 0], coords[joint_idx, 1], 
+        if show_labels and self.mano_joint_names:
+            # Add labels for key joints
+            key_labels = {0: 'Wrist', 4: 'Thumb', 8: 'Index', 12: 'Middle', 16: 'Ring', 20: 'Little'}
+            for joint_idx, label in key_labels.items():
+                if joint_idx < len(joints):
+                    ax.text(joints[joint_idx, 0], joints[joint_idx, 1], 
                            label, fontsize=10, fontweight='bold', 
                            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
         
-        ax.set_title(title, fontsize=14, fontweight='bold')
-        ax.set_xlabel('X'); ax.set_ylabel('Y')
-        ax.legend(loc='upper right', fontsize=8)
+        ax.set_title(title)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.legend()
         
-        # Set uniform tick spacing and grid
-        self.set_uniform_axes_2d(ax)
+        # Set equal aspect ratio
+        ax.set_aspect('equal')
         
         return ax
     
@@ -309,7 +292,7 @@ class HandGestureVisualizer:
             frame_idx (int): Frame index to visualize
             save_path (str, optional): Path to save the visualization
         """
-        left_hand, right_hand = self.get_frame_data(frame_idx)
+        left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
         
         fig = plt.figure(figsize=(15, 8))
         
@@ -318,41 +301,26 @@ class HandGestureVisualizer:
             ax1 = fig.add_subplot(1, 2, 1, projection='3d')
             ax2 = fig.add_subplot(1, 2, 2, projection='3d')
             
-            # Visualize hands in 3D
-            visualize_hand_3d(left_hand, f"Left Hand - Frame {frame_idx}", ax1, self.show_labels)
-            visualize_hand_3d(right_hand, f"Right Hand - Frame {frame_idx}", ax2, self.show_labels)
+            # Plot hands using standalone function
+            self.plot_hand_3d(left_hand, self.mano_joint_connections, 
+                             f"Left Hand - Frame {frame_idx}", 'blue', ax1)
+            self.plot_hand_3d(right_hand, self.mano_joint_connections, 
+                             f"Right Hand - Frame {frame_idx}", 'red', ax2)
             
-            # Set consistent view angles and uniform scaling
+            # Set consistent view angles
             for ax in [ax1, ax2]:
                 ax.view_init(elev=20, azim=45)
-                if self.auto_scale:
-                    # Calculate bounds for consistent scaling
-                    all_coords = np.vstack([left_hand, right_hand])
-                    x_min, x_max = all_coords[:, 0].min(), all_coords[:, 0].max()
-                    y_min, y_max = all_coords[:, 1].min(), all_coords[:, 1].max()
-                    z_min, z_max = all_coords[:, 2].min(), all_coords[:, 2].max()
-                    
-                    # Add some padding
-                    padding = 0.1
-                    x_range = x_max - x_min
-                    y_range = y_max - y_min
-                    z_range = z_max - z_min
-                    
-                    ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
-                    ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
-                    ax.set_zlim(z_min - padding * z_range, z_max + padding * z_range)
-                
-                # Set uniform tick spacing and grid
-                self.set_uniform_axes(ax)
         
         else:  # 2D top-down view
             # Create subplots for left and right hands (2D)
             ax1 = fig.add_subplot(1, 2, 1)
             ax2 = fig.add_subplot(1, 2, 2)
             
-            # Visualize hands in 2D top-down view
-            self.visualize_hand_2d_topdown(left_hand, f"Left Hand - Frame {frame_idx}", ax1, self.show_labels)
-            self.visualize_hand_2d_topdown(right_hand, f"Right Hand - Frame {frame_idx}", ax2, self.show_labels)
+            # Plot hands in 2D top-down view
+            self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, 
+                                    f"Left Hand - Frame {frame_idx}", 'blue', ax1, self.show_labels)
+            self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
+                                    f"Right Hand - Frame {frame_idx}", 'red', ax2, self.show_labels)
             
             # Set consistent scaling for both plots
             if self.auto_scale:
@@ -370,7 +338,7 @@ class HandGestureVisualizer:
                     ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
         
         view_mode_text = "3D" if self.view_mode == '3d' else "2D Top-Down"
-        plt.suptitle(f'Hand Gesture Visualization - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
+        plt.suptitle(f'Standalone Hand Gesture Visualization - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
                     fontsize=16, fontweight='bold')
         plt.tight_layout()
         
@@ -404,20 +372,19 @@ class HandGestureVisualizer:
         ax_stats_btn = fig.add_axes([0.6, 0.15, 0.1, 0.04])
         
         # Initialize visualization
-        left_hand, right_hand = self.get_frame_data(0)
+        left_hand, right_hand, left_info, right_info = self.get_frame_data(0)
         
         # Create initial plots based on view mode
         if self.view_mode == '3d':
-            visualize_hand_3d(left_hand, "Left Hand", ax_left, self.show_labels)
-            visualize_hand_3d(right_hand, "Right Hand", ax_right, self.show_labels)
+            self.plot_hand_3d(left_hand, self.mano_joint_connections, "Left Hand", 'blue', ax_left)
+            self.plot_hand_3d(right_hand, self.mano_joint_connections, "Right Hand", 'red', ax_right)
             
-            # Set consistent view angles and uniform scaling
+            # Set consistent view angles
             for ax in [ax_left, ax_right]:
                 ax.view_init(elev=20, azim=45)
-                self.set_uniform_axes(ax)
         else:
-            self.visualize_hand_2d_topdown(left_hand, "Left Hand", ax_left, self.show_labels)
-            self.visualize_hand_2d_topdown(right_hand, "Right Hand", ax_right, self.show_labels)
+            self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, "Left Hand", 'blue', ax_left, self.show_labels)
+            self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, "Right Hand", 'red', ax_right, self.show_labels)
         
         # Create slider
         slider = Slider(ax_slider, 'Frame', 0, self.num_frames-1, valinit=0, valstep=1)
@@ -439,7 +406,7 @@ class HandGestureVisualizer:
         def update_frame(val):
             """Update visualization for new frame."""
             frame_idx = int(slider.val)
-            left_hand, right_hand = self.get_frame_data(frame_idx)
+            left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
             # Clear previous plots
             ax_left.clear()
@@ -447,32 +414,19 @@ class HandGestureVisualizer:
             
             # Redraw hands based on view mode
             if self.view_mode == '3d':
-                visualize_hand_3d(left_hand, f"Left Hand - Frame {frame_idx}", ax_left, self.show_labels)
-                visualize_hand_3d(right_hand, f"Right Hand - Frame {frame_idx}", ax_right, self.show_labels)
+                self.plot_hand_3d(left_hand, self.mano_joint_connections, 
+                                f"Left Hand - Frame {frame_idx}", 'blue', ax_left)
+                self.plot_hand_3d(right_hand, self.mano_joint_connections, 
+                                f"Right Hand - Frame {frame_idx}", 'red', ax_right)
                 
-                # Set consistent view angles and uniform scaling
+                # Set consistent view angles
                 for ax in [ax_left, ax_right]:
                     ax.view_init(elev=20, azim=45)
-                    if self.auto_scale:
-                        all_coords = np.vstack([left_hand, right_hand])
-                        x_min, x_max = all_coords[:, 0].min(), all_coords[:, 0].max()
-                        y_min, y_max = all_coords[:, 1].min(), all_coords[:, 1].max()
-                        z_min, z_max = all_coords[:, 2].min(), all_coords[:, 2].max()
-                        
-                        padding = 0.1
-                        x_range = x_max - x_min
-                        y_range = y_max - y_min
-                        z_range = z_max - z_min
-                        
-                        ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
-                        ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
-                        ax.set_zlim(z_min - padding * z_range, z_max + padding * z_range)
-                    
-                    # Set uniform tick spacing and grid
-                    self.set_uniform_axes(ax)
             else:
-                self.visualize_hand_2d_topdown(left_hand, f"Left Hand - Frame {frame_idx}", ax_left, self.show_labels)
-                self.visualize_hand_2d_topdown(right_hand, f"Right Hand - Frame {frame_idx}", ax_right, self.show_labels)
+                self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, 
+                                        f"Left Hand - Frame {frame_idx}", 'blue', ax_left, self.show_labels)
+                self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
+                                        f"Right Hand - Frame {frame_idx}", 'red', ax_right, self.show_labels)
                 
                 # Set consistent scaling for both plots
                 if self.auto_scale:
@@ -560,7 +514,7 @@ Right Hand:
         export_button.on_clicked(export_frame)
         stats_button.on_clicked(show_stats)
         
-        plt.suptitle('Interactive Hand Gesture Visualizer', fontsize=16, fontweight='bold')
+        plt.suptitle('Standalone Interactive Hand Gesture Visualizer', fontsize=16, fontweight='bold')
         plt.tight_layout()
         plt.show()
     
@@ -586,7 +540,7 @@ Right Hand:
         
         def animate(frame_idx):
             """Animation function for each frame."""
-            left_hand, right_hand = self.get_frame_data(frame_idx)
+            left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
             # Clear previous plots
             ax_left.clear()
@@ -594,32 +548,19 @@ Right Hand:
             
             # Visualize hands based on view mode
             if self.view_mode == '3d':
-                visualize_hand_3d(left_hand, f"Left Hand - Frame {frame_idx}", ax_left, False)
-                visualize_hand_3d(right_hand, f"Right Hand - Frame {frame_idx}", ax_right, False)
+                self.plot_hand_3d(left_hand, self.mano_joint_connections, 
+                                f"Left Hand - Frame {frame_idx}", 'blue', ax_left)
+                self.plot_hand_3d(right_hand, self.mano_joint_connections, 
+                                f"Right Hand - Frame {frame_idx}", 'red', ax_right)
                 
-                # Set consistent view angles and uniform scaling
+                # Set consistent view angles
                 for ax in [ax_left, ax_right]:
                     ax.view_init(elev=20, azim=45)
-                    if self.auto_scale:
-                        all_coords = np.vstack([left_hand, right_hand])
-                        x_min, x_max = all_coords[:, 0].min(), all_coords[:, 0].max()
-                        y_min, y_max = all_coords[:, 1].min(), all_coords[:, 1].max()
-                        z_min, z_max = all_coords[:, 2].min(), all_coords[:, 2].max()
-                        
-                        padding = 0.1
-                        x_range = x_max - x_min
-                        y_range = y_max - y_min
-                        z_range = z_max - z_min
-                        
-                        ax.set_xlim(x_min - padding * x_range, x_max + padding * x_range)
-                        ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
-                        ax.set_zlim(z_min - padding * z_range, z_max + padding * z_range)
-                    
-                    # Set uniform tick spacing and grid
-                    self.set_uniform_axes(ax)
             else:
-                self.visualize_hand_2d_topdown(left_hand, f"Left Hand - Frame {frame_idx}", ax_left, False)
-                self.visualize_hand_2d_topdown(right_hand, f"Right Hand - Frame {frame_idx}", ax_right, False)
+                self.plot_hand_2d_topdown(left_hand, self.mano_joint_connections, 
+                                        f"Left Hand - Frame {frame_idx}", 'blue', ax_left, False)
+                self.plot_hand_2d_topdown(right_hand, self.mano_joint_connections, 
+                                        f"Right Hand - Frame {frame_idx}", 'red', ax_right, False)
                 
                 # Set consistent scaling for both plots
                 if self.auto_scale:
@@ -636,7 +577,7 @@ Right Hand:
                         ax.set_ylim(y_min - padding * y_range, y_max + padding * y_range)
             
             view_mode_text = "3D" if self.view_mode == '3d' else "2D Top-Down"
-            plt.suptitle(f'Hand Gesture Animation - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
+            plt.suptitle(f'Standalone Hand Gesture Animation - Frame {frame_idx} of {self.num_frames-1} ({view_mode_text})', 
                         fontsize=14, fontweight='bold')
         
         # Create animation
@@ -651,9 +592,9 @@ Right Hand:
         plt.show()
 
 def main():
-    """Main function to run the hand gesture visualizer."""
-    parser = argparse.ArgumentParser(description='Visualize hand gestures from JSON data')
-    parser.add_argument('json_file', help='Path to the JSON file containing hand motion data')
+    """Main function to run the standalone hand gesture visualizer."""
+    parser = argparse.ArgumentParser(description='Standalone visualization of hand gestures from comprehensive JSON data')
+    parser.add_argument('json_file', help='Path to the comprehensive JSON file containing hand motion data')
     parser.add_argument('--mode', choices=['single', 'interactive', 'animation'], 
                        default='interactive', help='Visualization mode')
     parser.add_argument('--view', choices=['3d', '2d_topdown'], 
@@ -667,7 +608,7 @@ def main():
     args = parser.parse_args()
     
     # Create visualizer with specified view mode
-    visualizer = HandGestureVisualizer(args.json_file, args.view)
+    visualizer = StandaloneHandGestureVisualizer(args.json_file, args.view)
     
     # Run appropriate mode
     if args.mode == 'single':
