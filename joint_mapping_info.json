@@ -1,0 +1,70 @@
+{
+  "model_output_structure": {
+    "total_joints": 32,
+    "joints_per_hand": 16,
+    "description": "16 joints per hand, simplified version of MANO"
+  },
+  "16_to_21_mapping": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 4,
+    "4": 5,
+    "5": 6,
+    "6": 8,
+    "7": 9,
+    "8": 10,
+    "9": 12,
+    "10": 13,
+    "11": 14,
+    "12": 16,
+    "13": 17,
+    "14": 18,
+    "15": 20
+  },
+  "finger_ranges": {
+    "thumb": [
+      1,
+      3
+    ],
+    "index": [
+      4,
+      6
+    ],
+    "middle": [
+      7,
+      9
+    ],
+    "ring": [
+      10,
+      12
+    ],
+    "little": [
+      13,
+      15
+    ]
+  },
+  "mano_joint_names": [
+    "Wrist",
+    "Thumb_CMC",
+    "Thumb_MCP",
+    "Thumb_IP",
+    "Thumb_Tip",
+    "Index_MCP",
+    "Index_PIP",
+    "Index_DIP",
+    "Index_Tip",
+    "Middle_MCP",
+    "Middle_PIP",
+    "Middle_DIP",
+    "Middle_Tip",
+    "Ring_MCP",
+    "Ring_PIP",
+    "Ring_DIP",
+    "Ring_Tip",
+    "Little_MCP",
+    "Little_PIP",
+    "Little_DIP",
+    "Little_Tip"
+  ]
+}

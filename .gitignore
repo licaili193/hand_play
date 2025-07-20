@@ -1,6 +1,9 @@
 output_frames/
 figs/
 __pycache__/
-PianoMotion10M/
-*.png
-*.mp4
+*.pyc
+
+PianoMotion10M/checkpoints
+PianoMotion10M/mano/*.pkl
+PianoMotion10M/logs
+PianoMotion10M/results
