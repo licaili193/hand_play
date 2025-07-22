@@ -29,7 +29,7 @@ if (!(Test-Path ".\checkpoints")) {
     New-Item -ItemType Directory -Path ".\checkpoints"
 }
 
-# Download the model checkpoint using Python
+# Download the model checkpoint and configuration files using Python
 python -c "
 from huggingface_hub import hf_hub_download
 import os
@@ -41,6 +41,22 @@ checkpoint_path = hf_hub_download(
     local_dir='./checkpoints'
 )
 print(f'Downloaded checkpoint to: {checkpoint_path}')
+
+# Download the Piano2Posi configuration file
+args_posi_path = hf_hub_download(
+    repo_id='agnJason/PianoMotion_models',
+    filename='diffusion_posiguide_hubertlarge_tf2/args_posi.txt',
+    local_dir='./checkpoints'
+)
+print(f'Downloaded Piano2Posi config to: {args_posi_path}')
+
+# Download the main configuration file
+args_path = hf_hub_download(
+    repo_id='agnJason/PianoMotion_models',
+    filename='diffusion_posiguide_hubertlarge_tf2/args.txt',
+    local_dir='./checkpoints'
+)
+print(f'Downloaded main config to: {args_path}')
 "
 
 # Alternatively, download the file from the HuggingFace page and place it under PianoMotion10M\checkpoints.

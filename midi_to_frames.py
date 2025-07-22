@@ -820,10 +820,60 @@ def validate_audio_quality(audio_wave, sample_rate=16000):
     return len(warnings) == 0
 
 # Paths (adjust these to your setup)
-MIDI_PATH = "examples\\example_1.mid"            # Input MIDI file
-AUDIO_PATH = "examples\\example_1.wav"           # Temporary audio file path
+MIDI_PATH = "examples\\example_2.mid"            # Input MIDI file
+AUDIO_PATH = "examples\\example_2.wav"           # Temporary audio file path
 CHECKPOINT_PATH = "PianoMotion10M\\checkpoints\\diffusion_posiguide_hubertlarge_tf2\\piano2pose-iter=90000-val_loss=0.0364401508122683.ckpt"  # Downloaded model checkpoint
 OUTPUT_JSON = "predicted_hand_motion.json"      # Output JSON path
+
+def load_piano2posi_config_from_checkpoint(checkpoint_path):
+    """Load Piano2Posi configuration from the checkpoint directory."""
+    
+    # Extract the checkpoint directory
+    checkpoint_dir = os.path.dirname(checkpoint_path)
+    args_posi_path = os.path.join(checkpoint_dir, 'args_posi.txt')
+    
+    if not os.path.exists(args_posi_path):
+        raise FileNotFoundError(f"Piano2Posi config not found: {args_posi_path}")
+    
+    # Load the configuration
+    with open(args_posi_path, 'r') as f:
+        import json
+        config = json.load(f)
+    
+    print(f"✓ Loaded Piano2Posi config from: {args_posi_path}")
+    print(f"  - wav2vec_path: {config.get('wav2vec_path', 'Not specified')}")
+    print(f"  - encoder_type: {config.get('encoder_type', 'Not specified')}")
+    print(f"  - num_layer: {config.get('num_layer', 'Not specified')}")
+    print(f"  - bs_dim: {config.get('bs_dim', 'Not specified')}")
+    
+    return config
+
+def create_piano2posi_from_config(config):
+    """Create Piano2Posi model from loaded configuration."""
+    
+    class Piano2PosiConfig:
+        def __init__(self, config_dict):
+            # Essential parameters
+            self.feature_dim = config_dict.get('feature_dim', 512)
+            self.bs_dim = config_dict.get('bs_dim', 6)
+            self.loss_mode = config_dict.get('loss_mode', 'naive_l1')
+            self.encoder_type = config_dict.get('encoder_type', 'transformer')
+            self.hidden_type = 'audio_f'  # Default for inference
+            self.max_seq_len = config_dict.get('max_seq_len', 900)
+            self.period = config_dict.get('period', 30)
+            self.latest_layer = config_dict.get('latest_layer', 'tanh')
+            self.num_layer = config_dict.get('num_layer', 8)
+            
+            # Handle wav2vec path - convert local path to HuggingFace model
+            wav2vec_path = config_dict.get('wav2vec_path', './checkpoints/hubert-large-ls960-ft')
+            if 'hubert-large' in wav2vec_path:
+                self.wav2vec_path = 'facebook/hubert-large-ls960-ft'
+            elif 'hubert-base' in wav2vec_path:
+                self.wav2vec_path = 'facebook/hubert-base-ls960'
+            else:
+                self.wav2vec_path = 'facebook/hubert-large-ls960-ft'  # Default
+    
+    return Piano2PosiConfig(config)
 
 def validate_model_config(piano2posi_args, diffusion_args, checkpoint_path):
     """Validate that model configuration matches checkpoint."""
@@ -2245,8 +2295,12 @@ def main():
         from models.piano2posi import Piano2Posi
         from models.denoise_diffusion import GaussianDiffusion1D_piano2pose, Unet1D
 
-        # Create proper configurations
-        piano2posi_args = Piano2PosiArgs(model_type)
+        # Load Piano2Posi configuration from checkpoint
+        print("Loading Piano2Posi configuration from checkpoint...")
+        piano2posi_config = load_piano2posi_config_from_checkpoint(CHECKPOINT_PATH)
+        piano2posi_args = create_piano2posi_from_config(piano2posi_config)
+        
+        # Create diffusion configuration
         diffusion_args = DiffusionArgs(model_type)
         
         # Validate configuration
@@ -2260,7 +2314,8 @@ def main():
         else:
             raise ValueError("Unknown wav2vec model type")
 
-        # Create Piano2Posi model
+        # Create Piano2Posi model with correct configuration
+        print("Creating Piano2Posi model with trained configuration...")
         piano2posi = Piano2Posi(piano2posi_args)
 
         # Create Unet1D model
@@ -2293,14 +2348,30 @@ def main():
         if not os.path.exists(CHECKPOINT_PATH):
             raise FileNotFoundError(f"Checkpoint not found: {CHECKPOINT_PATH}")
             
-        state_dict = torch.load(CHECKPOINT_PATH, map_location='cpu', weights_only=False)['state_dict']
+        checkpoint = torch.load(CHECKPOINT_PATH, map_location='cpu', weights_only=False)
+        state_dict = checkpoint['state_dict']
+        
+        # Count Piano2Posi and diffusion weights for logging
+        piano2posi_keys = [k for k in state_dict.keys() if k.startswith('piano2posi.')]
+        diffusion_keys = [k for k in state_dict.keys() if not k.startswith('piano2posi.')]
+        
+        print(f"✓ Found {len(piano2posi_keys)} Piano2Posi weights and {len(diffusion_keys)} diffusion weights")
+        
+        # Load the entire state dict into the diffusion model
+        # The Piano2Posi weights will be automatically loaded into the Piano2Posi model
+        # that's part of the diffusion model
+        print("Loading all weights into diffusion model...")
         model.load_state_dict(state_dict)
         model.eval()
 
         # Use GPU if available, otherwise fall back to CPU
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Move both models to the same device
+        piano2posi.to(device)
         model.to(device)
-        print(f"✓ Model loaded on device: {device}")
+        
+        print(f"✓ Models loaded on device: {device}")
         if device.type == 'cuda':
             print(f"✓ Using GPU: {torch.cuda.get_device_name(0)}")
             print(f"✓ GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
@@ -2308,6 +2379,7 @@ def main():
             torch.cuda.empty_cache()
             print(f"✓ GPU cache cleared")
         print(f"✓ Using transformer architecture with {diffusion_args.num_layer} layers")
+        print(f"✓ Piano2Posi model: {piano2posi_args.wav2vec_path} with {piano2posi_args.num_layer} layers")
         
         # Add MANO parameter structure detection
         print("\nDetecting MANO parameter structure...")
