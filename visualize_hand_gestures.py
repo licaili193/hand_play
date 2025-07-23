@@ -104,8 +104,8 @@ class StandaloneHandGestureVisualizer:
             
         Returns:
             Tuple containing:
-            - left_hand_joints: Left hand joint coordinates (21, 3)
-            - right_hand_joints: Right hand joint coordinates (21, 3)
+            - left_hand_joints: Left hand joint coordinates (16, 3)
+            - right_hand_joints: Right hand joint coordinates (16, 3)
             - left_hand_info: Left hand additional info (position, angles, bone lengths)
             - right_hand_info: Right hand additional info (position, angles, bone lengths)
         """
@@ -195,7 +195,7 @@ class StandaloneHandGestureVisualizer:
         Plot a hand in 3D using joint coordinates and connections.
         
         Args:
-            joints: Joint coordinates (21, 3)
+            joints: Joint coordinates (16, 3)
             connections: List of (parent, child) joint connections
             title: Title for the plot
             color: Color for the hand
@@ -222,8 +222,8 @@ class StandaloneHandGestureVisualizer:
                        [joints[parent, 2], joints[child, 2]], 
                        color=color, linewidth=2, alpha=alpha)
         
-        # Highlight key joints (wrist and fingertips)
-        key_joints = [0, 4, 8, 12, 16, 20]  # Wrist and fingertips
+        # Highlight key joints (wrist and fingertips) - 16-joint structure
+        key_joints = [0, 3, 6, 9, 12, 15]  # Wrist and fingertips for 16-joint model
         for joint_idx in key_joints:
             if joint_idx < len(joints):
                 ax.scatter(joints[joint_idx, 0], joints[joint_idx, 1], joints[joint_idx, 2], 
@@ -249,7 +249,7 @@ class StandaloneHandGestureVisualizer:
         Plot a hand in 2D top-down view using joint coordinates and connections.
         
         Args:
-            joints: Joint coordinates (21, 3)
+            joints: Joint coordinates (16, 3)
             connections: List of (parent, child) joint connections
             title: Title for the plot
             color: Color for the hand
@@ -275,16 +275,16 @@ class StandaloneHandGestureVisualizer:
                        [joints[parent, 1], joints[child, 1]], 
                        color=color, linewidth=2, alpha=0.8)
         
-        # Highlight key joints
-        key_joints = [0, 4, 8, 12, 16, 20]  # Wrist and fingertips
+        # Highlight key joints - 16-joint structure
+        key_joints = [0, 3, 6, 9, 12, 15]  # Wrist and fingertips for 16-joint model
         for joint_idx in key_joints:
             if joint_idx < len(joints):
                 ax.scatter(joints[joint_idx, 0], joints[joint_idx, 1], 
                           c='black', s=80, alpha=0.8, marker='o', edgecolors=color)
         
         if show_labels and self.mano_joint_names:
-            # Add labels for key joints
-            key_labels = {0: 'Wrist', 4: 'Thumb', 8: 'Index', 12: 'Middle', 16: 'Ring', 20: 'Little'}
+            # Add labels for key joints - 16-joint structure
+            key_labels = {0: 'Wrist', 3: 'Thumb', 6: 'Index', 9: 'Middle', 12: 'Ring', 15: 'Little'}
             for joint_idx, label in key_labels.items():
                 if joint_idx < len(joints):
                     ax.text(joints[joint_idx, 0], joints[joint_idx, 1], 
@@ -383,6 +383,7 @@ class StandaloneHandGestureVisualizer:
     def create_piano_keyboard(self) -> Tuple[List[Dict], List[Dict]]:
         """
         Create piano keyboard layout with white and black keys.
+        Middle C (C4) is centered at x = 0.
         
         Returns:
             Tuple of (white_keys, black_keys) where each key is a dict with position and note info
@@ -394,20 +395,27 @@ class StandaloneHandGestureVisualizer:
         white_key_notes = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
         black_key_notes = ['C#', 'D#', '', 'F#', 'G#', 'A#', '']
         
-        # Calculate key positions
-        current_x = 0
+        # Calculate the offset to center middle C (C4) at x = 0
+        # In the hardcoded 52-key layout, C4 is at index 28
+        # (i=28: octave=4, note='C', so C4)
+        # Each white key has width self.white_key_width
+        middle_c_offset = 28 * self.white_key_width
+        
+        # Calculate key positions starting from the leftmost key
+        current_x = -middle_c_offset  # Start so that C4 will be at x = 0
         octave = 0
         
         for i in range(self.white_keys):
             # White key
             note = white_key_notes[i % 7]
             full_note = f"{note}{octave + (i // 7)}"
+            midi_note = 21 + i  # A0 = 21, C1 = 24, etc.
             
             white_keys.append({
                 'x': current_x,
                 'width': self.white_key_width,
                 'note': full_note,
-                'midi_note': 21 + i,  # A0 = 21, C1 = 24, etc.
+                'midi_note': midi_note,
                 'octave': octave + (i // 7)
             })
             
@@ -415,11 +423,13 @@ class StandaloneHandGestureVisualizer:
             if i % 7 in [0, 1, 3, 4, 5]:  # C, D, F, G, A
                 black_note = black_key_notes[i % 7]
                 if black_note:  # Skip empty slots
+                    # Calculate black key MIDI note more accurately
+                    black_midi_note = midi_note + 1  # Sharp of the current white key
                     black_keys.append({
                         'x': current_x + self.white_key_width * 0.6,  # Position black key
                         'width': self.white_key_width * 0.6,
                         'note': f"{black_note}{octave + (i // 7)}",
-                        'midi_note': 22 + i + (i // 7),  # Approximate MIDI note
+                        'midi_note': black_midi_note,
                         'octave': octave + (i // 7)
                     })
             
@@ -437,8 +447,8 @@ class StandaloneHandGestureVisualizer:
         Detect which keys are being pressed based on hand positions.
         
         Args:
-            left_hand: Left hand joint coordinates (21, 3)
-            right_hand: Right hand joint coordinates (21, 3)
+            left_hand: Left hand joint coordinates (16, 3)
+            right_hand: Right hand joint coordinates (16, 3)
             threshold: Distance threshold for key press detection
             
         Returns:
@@ -450,8 +460,8 @@ class StandaloneHandGestureVisualizer:
         white_keys, black_keys = self.create_piano_keyboard()
         all_keys = white_keys + black_keys
         
-        # Check fingertips (joints 4, 8, 12, 16, 20) for both hands
-        fingertip_indices = [4, 8, 12, 16, 20]
+        # Check fingertips (joints 3, 6, 9, 12, 15) for both hands - 16-joint structure
+        fingertip_indices = [3, 6, 9, 12, 15]
         
         for hand_name, hand_joints in [('left', left_hand), ('right', right_hand)]:
             for tip_idx in fingertip_indices:

@@ -704,10 +704,10 @@ def explain_pianomotion_mano_integration():
             "coordinate_system": "MANO coordinate frame with piano-specific adaptations"
         },
         "data_flow": {
-            "step_1": "Audio → Position Predictor → 3D hand positions",
-            "step_2": "Audio + Positions → Diffusion Model → Hand rotation parameters",
-            "step_3": "Positions + Rotations → MANO Forward Kinematics → Joint positions",
-            "step_4": "Joint positions → Visualization/Animation"
+            "step_1": "Audio -> Position Predictor -> 3D hand positions",
+            "step_2": "Audio + Positions -> Diffusion Model -> Hand rotation parameters",
+            "step_3": "Positions + Rotations -> MANO Forward Kinematics -> Joint positions",
+            "step_4": "Joint positions -> Visualization/Animation"
         },
         "official_rendering": {
             "method": "Uses render_result() from datasets/show.py",
@@ -782,7 +782,7 @@ def approximate_joints_from_parameters(hand_position, hand_rotations, hand='righ
     # Translate to world position
     joints = joint_offsets + hand_position
     
-    print(f"✓ Created approximate joints for {hand} hand ({len(joints)} joints)")
+    print(f"[OK] Created approximate joints for {hand} hand ({len(joints)} joints)")
     
     return joints
 
@@ -794,16 +794,16 @@ def visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=True):
     # Validate frame index
     num_frames = processed_data.get('num_frames', 0)
     if num_frames == 0:
-        print("✗ No frames available in processed data")
+        print("[ERROR] No frames available in processed data")
         return
     
     # Ensure frame_idx is valid
     if frame_idx < 0:
         frame_idx = 0  # Use first frame instead of negative index
-        print(f"⚠ Negative frame index corrected to 0")
+        print(f"[WARNING] Negative frame index corrected to 0")
     elif frame_idx >= num_frames:
         frame_idx = num_frames - 1  # Use last frame
-        print(f"⚠ Frame index {frame_idx} exceeds available frames, using last frame")
+        print(f"[WARNING] Frame index {frame_idx} exceeds available frames, using last frame")
     
     # Extract data for the specified frame
     try:
@@ -812,7 +812,7 @@ def visualize_mano_hands(processed_data, frame_idx=0, use_full_mano=True):
         right_angles = processed_data['right_hand_angles'][frame_idx]
         left_angles = processed_data['left_hand_angles'][frame_idx]
     except (KeyError, IndexError) as e:
-        print(f"✗ Error accessing frame {frame_idx}: {e}")
+        print(f"[ERROR] Error accessing frame {frame_idx}: {e}")
         print(f"  Available data keys: {list(processed_data.keys())}")
         if 'num_frames' in processed_data:
             print(f"  Total frames: {processed_data['num_frames']}")
@@ -949,7 +949,7 @@ def use_official_rendering_if_available(right_data, left_data, audio_array):
         try:
             import cv2
         except ImportError:
-            print("✗ OpenCV (cv2) not available - required for official rendering")
+            print("[ERROR] OpenCV (cv2) not available - required for official rendering")
             print("  Install with: pip install opencv-python")
             print("  Falling back to custom visualization")
             return False
@@ -962,7 +962,7 @@ def use_official_rendering_if_available(right_data, left_data, audio_array):
         try:
             from datasets.show import render_result
         except ImportError as e:
-            print(f"✗ Official rendering module not found: {e}")
+            print(f"[ERROR] Official rendering module not found: {e}")
             print("  This may be due to missing PianoMotion10M dependencies")
             print("  Falling back to custom visualization")
             return False
@@ -980,13 +980,13 @@ def use_official_rendering_if_available(right_data, left_data, audio_array):
             save_video=False  # Set to True if you want video output
         )
         
-        print(f"✓ Used official PianoMotion10M rendering")
-        print(f"✓ Output saved to: {output_dir}")
+        print(f"[OK] Used official PianoMotion10M rendering")
+        print(f"[OK] Output saved to: {output_dir}")
         
         return True
         
     except Exception as e:
-        print(f"✗ Official rendering failed: {e}")
+        print(f"[ERROR] Official rendering failed: {e}")
         print("Falling back to custom visualization")
         return False
 
@@ -1008,10 +1008,10 @@ def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'
             sys.path.insert(0, current_dir)
         
         from midi_to_frames import process_model_output_with_proper_coordinates, verify_and_correct_hand_ordering
-        print("✓ Using proper coordinate processing from midi_to_frames.py")
+        print("[OK] Using proper coordinate processing from midi_to_frames.py")
     except ImportError as e:
-        print(f"⚠ Could not import proper processing function: {e}")
-        print("⚠ Using fallback processing (may not have correct scaling)")
+        print(f"[WARNING] Could not import proper processing function: {e}")
+        print("[WARNING] Using fallback processing (may not have correct scaling)")
         # Fall back to the local version
         processed_data = process_model_output_with_proper_coordinates(pose_hat, guide, device)
     else:
@@ -1027,15 +1027,15 @@ def complete_mano_integration_pipeline(pose_hat, guide, audio_wave, device='cpu'
         # Add hand ordering metadata
         processed_data['hand_ordering_corrected'] = was_swapped
         if was_swapped:
-            print("✓ Hand ordering was corrected during processing")
+            print("[OK] Hand ordering was corrected during processing")
         else:
-            print("✓ Hand ordering was verified as correct")
+            print("[OK] Hand ordering was verified as correct")
     
     # Try official rendering first
     right_data, left_data = prepare_data_for_official_rendering(processed_data)
     
     if use_official_rendering_if_available(right_data, left_data, audio_wave):
-        print("✓ Used official PianoMotion10M rendering pipeline")
+        print("[OK] Used official PianoMotion10M rendering pipeline")
     else:
         print("Using custom MANO-based visualization")
         
@@ -1065,10 +1065,10 @@ def determine_mano_parameter_structure(sample_rotations):
     best_interpretation, results = test_parameter_interpretations(test_position, sample_rotations)
     
     if best_interpretation:
-        print(f"✓ Detected parameter structure: {best_interpretation}")
+        print(f"[OK] Detected parameter structure: {best_interpretation}")
         return best_interpretation
     else:
-        print("⚠ Could not determine parameter structure, using fallback")
+        print("[WARNING] Could not determine parameter structure, using fallback")
         return "standard_mano"  # Conservative fallback
 
 def test_parameter_interpretations(hand_position, hand_rotations):
@@ -1120,10 +1120,10 @@ def test_parameter_interpretations(hand_position, hand_rotations):
                 'success': True
             }
             
-            print(f"  ✓ Success: {name} produced valid joints (score: {validation_score:.2f})")
+            print(f"  [OK] Success: {name} produced valid joints (score: {validation_score:.2f})")
             
         except Exception as e:
-            print(f"  ✗ Failed: {name} - {e}")
+            print(f"  [ERROR] Failed: {name} - {e}")
             results[name] = {'success': False, 'error': str(e)}
     
     # Compare results
@@ -1134,10 +1134,10 @@ def test_parameter_interpretations(hand_position, hand_rotations):
             successful_interpretations.items(), 
             key=lambda x: x[1]['validation_score']
         )
-        print(f"\n🏆 Best interpretation: {best_interpretation[0]} (score: {best_interpretation[1]['validation_score']:.2f})")
+        print(f"\n[BEST] Best interpretation: {best_interpretation[0]} (score: {best_interpretation[1]['validation_score']:.2f})")
         return best_interpretation[0], results
     else:
-        print("\n⚠ No interpretation produced valid results")
+        print("\n[WARNING] No interpretation produced valid results")
         return None, results
 
 def convert_mano_params_with_structure(hand_position, global_orient, hand_pose, method_name):
@@ -1170,49 +1170,49 @@ def validate_joint_positions(joints, method_name):
     # Check 1: Reasonable number of joints (expecting 21)
     if len(joints) == 21:
         score += 1.0
-        print(f"    ✓ Correct joint count: 21")
+        print(f"    [OK] Correct joint count: 21")
     else:
-        print(f"    ⚠ Unexpected joint count: {len(joints)}")
+        print(f"    [WARNING] Unexpected joint count: {len(joints)}")
     
     # Check 2: Realistic joint positions (not NaN, not extreme values)
     if not np.any(np.isnan(joints)) and not np.any(np.isinf(joints)):
         score += 1.0
-        print(f"    ✓ No NaN/Inf values")
+        print(f"    [OK] No NaN/Inf values")
     else:
-        print(f"    ⚠ Contains NaN/Inf values")
+        print(f"    [WARNING] Contains NaN/Inf values")
     
     # Check 3: Reasonable coordinate ranges
     joint_range = np.ptp(joints, axis=0)  # Range in each dimension
     if all(0.01 <= r <= 0.5 for r in joint_range):  # 1cm to 50cm range
         score += 1.0
-        print(f"    ✓ Reasonable coordinate ranges: {joint_range}")
+        print(f"    [OK] Reasonable coordinate ranges: {joint_range}")
     else:
-        print(f"    ⚠ Extreme coordinate ranges: {joint_range}")
+        print(f"    [WARNING] Extreme coordinate ranges: {joint_range}")
     
     # Check 4: Hand structure (fingers extend from wrist)
     wrist_pos = joints[0]
     finger_distances = [np.linalg.norm(joints[i] - wrist_pos) for i in [4, 8, 12, 16, 20]]  # Fingertips
     if all(0.05 <= d <= 0.15 for d in finger_distances):  # 5cm to 15cm from wrist
         score += 1.0
-        print(f"    ✓ Realistic finger lengths: {finger_distances}")
+        print(f"    [OK] Realistic finger lengths: {finger_distances}")
     else:
-        print(f"    ⚠ Unrealistic finger lengths: {finger_distances}")
+        print(f"    [WARNING] Unrealistic finger lengths: {finger_distances}")
     
     # Check 5: Bone length consistency
     bone_lengths = calculate_bone_lengths_simple(joints)
     if bone_lengths and all(0.01 <= bl <= 0.08 for bl in bone_lengths):  # 1cm to 8cm bones
         score += 1.0
-        print(f"    ✓ Realistic bone lengths")
+        print(f"    [OK] Realistic bone lengths")
     else:
-        print(f"    ⚠ Unrealistic bone lengths")
+        print(f"    [WARNING] Unrealistic bone lengths")
     
     # Check 6: Hand chirality (right hand should have thumb on correct side)
     thumb_direction = joints[4] - joints[0]  # Thumb tip - wrist
     if thumb_direction[0] > 0:  # Assuming right hand, thumb should be positive X
         score += 1.0
-        print(f"    ✓ Correct hand chirality")
+        print(f"    [OK] Correct hand chirality")
     else:
-        print(f"    ⚠ Incorrect hand chirality")
+        print(f"    [WARNING] Incorrect hand chirality")
     
     final_score = score / max_score
     print(f"    Total score: {score}/{max_score} = {final_score:.2f}")
@@ -1385,23 +1385,115 @@ def convert_with_adaptive_structure(hand_position, hand_rotations, hand='right')
         # Fallback to approximation
         return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
 
-def convert_mano_params_to_joints(hand_position, hand_rotations, hand='right'):
+def convert_mano_params_to_joints(hand_position, hand_rotations, hand_pose=None, hand='right'):
     """
-    Convert MANO parameters (position + rotations) to joint positions.
+    Convert MANO parameters to joint positions.
     
-    This is the main entry point that uses the robust parameter structure detection.
+    Supports both old format (position + 48 rotation params) and new corrected format 
+    (position + global_orient + hand_pose matching PianoMotion10M show.py).
     
     Args:
-        hand_position: (3,) array - 3D position of hand
-        hand_rotations: (48,) array - MANO rotation parameters
+        hand_position: (3,) array - 3D translation of hand
+        hand_rotations: (48,) array - MANO rotation parameters (old format)
+                       OR (3,) array - global orientation (new format, requires hand_pose)
+        hand_pose: (45,) array - hand pose parameters (new format only)
         hand: 'right' or 'left'
     
     Returns:
         joint_positions: (21, 3) array - 3D positions of MANO joints
     """
     
-    # Use the robust conversion system
-    return convert_mano_params_robust(hand_position, hand_rotations, hand)
+    # Check if we have the new corrected format (3 separate parameter arrays)
+    if hand_pose is not None:
+        # New format: translation + global_orient + hand_pose
+        # This matches the PianoMotion10M show.py format exactly
+        print(f"Using corrected MANO format: translation(3) + global_orient(3) + hand_pose(45)")
+        return convert_mano_params_official_format(hand_position, hand_rotations, hand_pose, hand)
+    else:
+        # Old format: use the robust conversion system
+        return convert_mano_params_robust(hand_position, hand_rotations, hand)
+
+def convert_mano_params_official_format(translation, global_orient, hand_pose, hand='right'):
+    """
+    Convert MANO parameters using the exact format from PianoMotion10M show.py.
+    
+    This function replicates the parameter structure used in the official rendering code:
+    - translation: (3,) - 3D position (camera_t in show.py)
+    - global_orient: (3,) - global orientation (global_orient in show.py) 
+    - hand_pose: (45,) - hand pose parameters (hand_pose in show.py)
+    
+    Args:
+        translation: (3,) array - 3D translation
+        global_orient: (3,) array - global orientation  
+        hand_pose: (45,) array - hand pose parameters
+        hand: 'right' or 'left'
+    
+    Returns:
+        joints: (21, 3) array - 3D joint positions
+    """
+    try:
+        import torch
+        import numpy as np
+        
+        # Try to load the MANO model exactly as in show.py
+        mano_model_path = find_mano_model_path()
+        if mano_model_path is None:
+            raise FileNotFoundError("MANO model not found")
+        
+        # Load MANO model
+        from PianoMotion10M.models.mano import build_mano
+        mano_layer = build_mano()
+        
+        # Convert arrays to tensors
+        translation_tensor = torch.tensor(translation, dtype=torch.float32).unsqueeze(0)
+        global_orient_tensor = torch.tensor(global_orient, dtype=torch.float32).unsqueeze(0)  
+        hand_pose_tensor = torch.tensor(hand_pose, dtype=torch.float32).unsqueeze(0)
+        betas = torch.zeros(1, 10, dtype=torch.float32)  # Zero shape parameters
+        
+        # Use the appropriate hand model
+        hand_key = 'right'  # PianoMotion10M uses 'right' model for both hands in show.py
+        
+        # Run MANO forward pass (exactly as in show.py lines 96-99, 115-118)
+        if hand == 'right':
+            output = mano_layer[hand_key](
+                global_orient=global_orient_tensor,
+                hand_pose=hand_pose_tensor,
+                betas=betas,
+                transl=translation_tensor
+            )
+            vertices = output.vertices[0].detach().numpy()  # Shape: (778, 3)
+        else:
+            # For left hand, PianoMotion10M flips X coordinate (show.py line 120)
+            output = mano_layer[hand_key](
+                global_orient=global_orient_tensor,
+                hand_pose=hand_pose_tensor,
+                betas=betas,
+                transl=translation_tensor
+            )
+            vertices = output.vertices[0].detach().numpy()  # Shape: (778, 3)
+            vertices[:, 0] = -1 * vertices[:, 0]  # Flip X for left hand
+        
+        # Extract joint positions from vertices using MANO joint regressor
+        # MANO outputs joints as part of the forward pass
+        if hasattr(output, 'joints'):
+            joints = output.joints[0].detach().numpy()  # Shape: (21, 3)
+            if hand == 'left':
+                joints[:, 0] = -1 * joints[:, 0]  # Flip X for left hand
+        else:
+            # Fallback: approximate joints from vertices (first 21 vertices are usually joint-related)
+            joints = vertices[:21]  # Approximate joint positions
+        
+        print(f"[OK] Created official MANO joints for {hand} hand using PianoMotion10M format")
+        return joints
+        
+    except Exception as e:
+        print(f"Official MANO conversion failed: {e}")
+        # Fallback to approximation method
+        print(f"Falling back to approximation method...")
+        
+        # Combine parameters back to original format for fallback
+        combined_params = np.concatenate([global_orient, hand_pose])  # 48 parameters
+        return approximate_joints_from_parameters(translation, combined_params, hand)
 
 def convert_mano_params_to_joints_legacy(hand_position, hand_rotations, hand='right'):
     """
@@ -1414,7 +1506,7 @@ def convert_mano_params_to_joints_legacy(hand_position, hand_rotations, hand='ri
     # For visualization purposes, we'll create a reasonable joint mapping
     
     if len(hand_rotations) != 48:
-        print(f"✗ Expected 48 rotation parameters, got {len(hand_rotations)}")
+        print(f"[ERROR] Expected 48 rotation parameters, got {len(hand_rotations)}")
         print("  Falling back to simplified joint approximation")
         return approximate_joints_from_parameters(hand_position, hand_rotations, hand)
     
@@ -1526,7 +1618,7 @@ def convert_mano_params_to_joints_legacy(hand_position, hand_rotations, hand='ri
     # Translate to world position
     joints = joint_offsets + hand_position
     
-    print(f"✓ Created MANO-based joints for {hand} hand ({len(joints)} joints)")
+    print(f"[OK] Created MANO-based joints for {hand} hand ({len(joints)} joints)")
     print(f"  - Used {len(global_orient)} global orientation parameters")
     print(f"  - Used {len(hand_pose)} hand pose parameters")
     

@@ -8,3 +8,6 @@ PianoMotion10M/checkpoints
 PianoMotion10M/mano/*.pkl
 PianoMotion10M/logs
 PianoMotion10M/results
+PianoMotion10M/datasets/dataset
+
+CLAUDE.md

@@ -57,6 +57,21 @@ args_path = hf_hub_download(
     local_dir='./checkpoints'
 )
 print(f'Downloaded main config to: {args_path}')
+
+# Download the audio models required by the configuration
+print('Downloading audio models...')
+from transformers import HubertModel, Wav2Vec2Model
+import os
+
+# Download the HuBERT-large model (facebook/hubert-large-ls960-ft) required by current args.txt
+print('Downloading HuBERT-large model (facebook/hubert-large-ls960-ft)...')
+hubert_model = HubertModel.from_pretrained('facebook/hubert-large-ls960-ft', cache_dir='./checkpoints')
+print('HuBERT-large model downloaded successfully to ./checkpoints!')
+
+# Also download Wav2Vec2-large model as mentioned in the installation docs
+print('Downloading Wav2Vec2-large model (facebook/wav2vec2-large-960h-lv60-self)...')
+wav2vec2_model = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-large-960h-lv60-self', cache_dir='./checkpoints')
+print('Wav2Vec2-large model downloaded successfully to ./checkpoints!')
 "
 
 # Alternatively, download the file from the HuggingFace page and place it under PianoMotion10M\checkpoints.
