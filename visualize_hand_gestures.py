@@ -49,10 +49,30 @@ class StandaloneHandGestureVisualizer:
         self.frames = self.data.get('frames', [])
         self.num_frames = len(self.frames)
         
+        # Validate joint structure - ensure we have 16 joints per hand
+        if self.num_frames > 0:
+            sample_frame = self.frames[0]
+            left_joints = sample_frame.get('left_hand_joints', [])
+            right_joints = sample_frame.get('right_hand_joints', [])
+            
+            if len(left_joints) != 16 or len(right_joints) != 16:
+                print(f"Warning: Expected 16 joints per hand, but got {len(left_joints)} left and {len(right_joints)} right joints")
+                print("Using 16-joint connection structure for visualization")
+        
         # Extract metadata
         self.metadata = self.data.get('metadata', {})
         self.mano_joint_names = self.metadata.get('mano_joint_names', [])
-        self.mano_joint_connections = self.metadata.get('mano_joint_connections', [])
+        
+        # Use correct 16-joint connections for the actual data structure
+        # The data has 16 joints per hand, not 21
+        self.mano_joint_connections = [
+            (0, 1), (1, 2), (2, 3),      # Thumb
+            (0, 4), (4, 5), (5, 6),      # Index
+            (0, 7), (7, 8), (8, 9),      # Middle
+            (0, 10), (10, 11), (11, 12), # Ring
+            (0, 13), (13, 14), (14, 15)  # Little
+        ]
+        
         self.finger_groups = self.metadata.get('finger_groups', {})
         
         # Extract keyboard information
@@ -195,8 +215,8 @@ class StandaloneHandGestureVisualizer:
         Plot a hand in 3D using joint coordinates and connections.
         
         Args:
-            joints: Joint coordinates (16, 3)
-            connections: List of (parent, child) joint connections
+            joints: Joint coordinates (16, 3) - 16-joint MANO structure
+            connections: List of (parent, child) joint connections for 16-joint model
             title: Title for the plot
             color: Color for the hand
             ax: Matplotlib 3D axis
@@ -249,8 +269,8 @@ class StandaloneHandGestureVisualizer:
         Plot a hand in 2D top-down view using joint coordinates and connections.
         
         Args:
-            joints: Joint coordinates (16, 3)
-            connections: List of (parent, child) joint connections
+            joints: Joint coordinates (16, 3) - 16-joint MANO structure
+            connections: List of (parent, child) joint connections for 16-joint model
             title: Title for the plot
             color: Color for the hand
             ax: Matplotlib 2D axis
@@ -447,8 +467,8 @@ class StandaloneHandGestureVisualizer:
         Detect which keys are being pressed based on hand positions.
         
         Args:
-            left_hand: Left hand joint coordinates (16, 3)
-            right_hand: Right hand joint coordinates (16, 3)
+            left_hand: Left hand joint coordinates (16, 3) - 16-joint MANO structure
+            right_hand: Right hand joint coordinates (16, 3) - 16-joint MANO structure
             threshold: Distance threshold for key press detection
             
         Returns:
