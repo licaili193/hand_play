@@ -331,8 +331,7 @@ class StandaloneHandGestureVisualizer:
         """
         left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
         
-        # Detect pressed keys
-        pressed_keys = self.detect_pressed_keys(left_hand, right_hand)
+        pressed_keys = []
         
         fig = plt.figure(figsize=(12, 10))
         
@@ -346,9 +345,9 @@ class StandaloneHandGestureVisualizer:
             self.plot_hand_3d(right_hand, self.mano_joint_connections, 
                              f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
             
-            # Add piano keyboard - position it in front of the hands (lower Z value)
-            keyboard_z = 18.5  # Position keyboard in front of hands (hands are at ~19)
-            self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=0.05, keyboard_z=keyboard_z)
+            # Add piano keyboard - position it to match hand coordinates
+            keyboard_z = 18.8  # Position keyboard to match hand Z coordinates (~18.8)
+            self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1, keyboard_z=keyboard_z)
             
             # Set consistent view angle
             ax.view_init(elev=20, azim=45)
@@ -373,7 +372,7 @@ class StandaloneHandGestureVisualizer:
                                     f"Right Hand - Frame {frame_idx}", 'red', ax, self.show_labels, add_to_existing=True)
             
             # Add piano keyboard - position it below the hands
-            self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=0.05)
+            self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1)
             
             # Set consistent scaling for both hands
             if self.auto_scale:
@@ -416,10 +415,14 @@ class StandaloneHandGestureVisualizer:
         black_key_notes = ['C#', 'D#', '', 'F#', 'G#', 'A#', '']
         
         # Calculate the offset to center middle C (C4) at x = 0
-        # In the hardcoded 52-key layout, C4 is at index 28
-        # (i=28: octave=4, note='C', so C4)
-        # Each white key has width self.white_key_width
-        middle_c_offset = 28 * self.white_key_width
+        # According to TargetProcessor: MIDI 60 (C4) = piano_note 39 (60-21=39)
+        # In piano layout: A0(21)=0, A#0(22)=black, B0(23)=1, C1(24)=2...
+        # C4(60) corresponds to white key index 39 in the 88-key system
+        # But we only show 52 white keys, so we need to map accordingly
+        # White keys: A0,B0,C1,D1,E1,F1,G1,A1,B1,C2... (pattern: A,B,C,D,E,F,G)
+        # C4 is the 4th C, so it's at white key index: 2 + 7*3 = 23 (0-indexed)
+        middle_c_white_index = 23  # Correct white key index for C4 in 52-key layout
+        middle_c_offset = middle_c_white_index * self.white_key_width
         
         # Calculate key positions starting from the leftmost key
         current_x = -middle_c_offset  # Start so that C4 will be at x = 0
@@ -461,54 +464,10 @@ class StandaloneHandGestureVisualizer:
         
         return white_keys, black_keys
     
-    def detect_pressed_keys(self, left_hand: np.ndarray, right_hand: np.ndarray, 
-                          threshold: float = 0.1) -> List[Dict]:
-        """
-        Detect which keys are being pressed based on hand positions.
-        
-        Args:
-            left_hand: Left hand joint coordinates (16, 3) - 16-joint MANO structure
-            right_hand: Right hand joint coordinates (16, 3) - 16-joint MANO structure
-            threshold: Distance threshold for key press detection
-            
-        Returns:
-            List of pressed keys with their information
-        """
-        pressed_keys = []
-        
-        # Get keyboard layout
-        white_keys, black_keys = self.create_piano_keyboard()
-        all_keys = white_keys + black_keys
-        
-        # Check fingertips (joints 3, 6, 9, 12, 15) for both hands - 16-joint structure
-        fingertip_indices = [3, 6, 9, 12, 15]
-        
-        for hand_name, hand_joints in [('left', left_hand), ('right', right_hand)]:
-            for tip_idx in fingertip_indices:
-                if tip_idx < len(hand_joints):
-                    tip_pos = hand_joints[tip_idx]
-                    
-                    # Check distance to each key
-                    for key in all_keys:
-                        key_x = key['x']
-                        # Use keyboard position that matches the visualization
-                        key_pos = np.array([key_x, 0.05, 18.5])
-                        
-                        distance = np.linalg.norm(tip_pos - key_pos)
-                        
-                        if distance < threshold:
-                            pressed_keys.append({
-                                'key': key,
-                                'hand': hand_name,
-                                'finger': tip_idx,
-                                'distance': distance,
-                                'position': tip_pos
-                            })
-        
-        return pressed_keys
+
     
     def plot_piano_keyboard(self, ax, pressed_keys: List[Dict] = None, 
-                          keyboard_y: float = 0.05, keyboard_z: float = 18.5):
+                          keyboard_y: float = 0.05, keyboard_z: float = 18.8):
         """
         Plot piano keyboard in 3D space.
         
@@ -713,8 +672,7 @@ class StandaloneHandGestureVisualizer:
             frame_idx = int(slider.val)
             left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
-            # Detect pressed keys
-            pressed_keys = self.detect_pressed_keys(left_hand, right_hand)
+            pressed_keys = []
             
             # Clear previous plots
             ax.clear()
@@ -727,7 +685,7 @@ class StandaloneHandGestureVisualizer:
                                 f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
                 
                 # Add piano keyboard
-                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1, keyboard_z=0)
+                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1, keyboard_z=18.8)
                 
                 # Set consistent view angle
                 ax.view_init(elev=20, azim=45)
@@ -899,8 +857,7 @@ Right Hand:
             """Animation function for each frame."""
             left_hand, right_hand, left_info, right_info = self.get_frame_data(frame_idx)
             
-            # Detect pressed keys
-            pressed_keys = self.detect_pressed_keys(left_hand, right_hand)
+            pressed_keys = []
             
             # Clear previous plots
             ax.clear()
@@ -913,7 +870,7 @@ Right Hand:
                                 f"Right Hand - Frame {frame_idx}", 'red', ax, alpha=0.8, add_to_existing=True)
                 
                 # Add piano keyboard
-                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1, keyboard_z=0)
+                self.plot_piano_keyboard(ax, pressed_keys, keyboard_y=-0.1, keyboard_z=18.8)
                 
                 # Set consistent view angle
                 ax.view_init(elev=20, azim=45)
